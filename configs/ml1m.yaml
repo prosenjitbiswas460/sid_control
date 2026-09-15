@@ -24,6 +24,7 @@ tokenizers:
   - {kind: rq, text_source: title}
   - {kind: rq, text_source: title_attr}
   - {kind: category, text_source: title}
+  - {kind: shuffled, text_source: title}   # granularity-matched null
   - {kind: random, text_source: title}
 
 model:

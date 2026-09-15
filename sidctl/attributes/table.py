@@ -43,6 +43,22 @@ class AttributeTable:
         """Fraction of catalog carrying each attribute."""
         return self.matrix.mean(axis=0)
 
+    def labels_per_item(self) -> float:
+        """
+        Mean number of attributes per item.
+
+        This is the key explanatory variable for prefix controllability. At 1.0
+        the attribute is a partition of the catalog and a constraint can in
+        principle be expressed as a set of prefixes. Above 1.0, banning one
+        label necessarily drags in the co-occurring labels of the same items,
+        so exact prefix-level control becomes impossible for *any* tokenizer.
+        """
+        return float(self.matrix.sum(axis=1).mean())
+
+    def cooccurrence_rate(self) -> float:
+        """Fraction of items carrying more than one attribute."""
+        return float((self.matrix.sum(axis=1) > 1).mean())
+
     def items_with(self, attr: int) -> np.ndarray:
         return np.flatnonzero(self.matrix[:, attr])
 

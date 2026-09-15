@@ -10,12 +10,18 @@ Three tokenizer kinds are provided on purpose:
     Level 0 is the item's attribute by construction. Attribute constraints are
     exactly prefix-realisable here, so it is the *upper bound* on how well
     prefix masking could ever work.
+``shuffled``
+    The ``rq`` code table with the item-to-code assignment permuted. This is the
+    *correct null model*: it preserves the prefix size distribution exactly, so
+    any advantage ``rq`` holds over it is due to semantic alignment rather than
+    to how finely the tree happens to partition the catalog.
 ``random``
-    Codes assigned at random. Prefixes carry no attribute information, so this
-    is the *lower bound*.
+    Codes drawn uniformly. Prefixes carry no attribute information, but the
+    partition is also much more uniform than a real RQ tree, so this is *not*
+    granularity-matched -- compare against ``shuffled`` instead.
 
-Reporting ``rq`` between these two bounds is what turns a vague claim about
-"coarse-to-fine semantics" into a measurement.
+Reporting ``rq`` against ``shuffled`` and ``category`` is what turns a vague
+claim about "coarse-to-fine semantics" into a measurement.
 """
 
 from __future__ import annotations
@@ -32,7 +38,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sidctl.attributes import AttributeTable
 from sidctl.sid.rq_kmeans import RQKMeans
 
-TokenizerKind = ("rq", "category", "random")
+TokenizerKind = ("rq", "category", "random", "shuffled")
 
 
 def _embed_texts(
@@ -95,6 +101,8 @@ class SIDTokenizer:
     ) -> "SIDTokenizer":
         if self.kind == "random":
             codes = self._fit_random(len(texts))
+        elif self.kind == "shuffled":
+            codes = self._fit_shuffled(texts)
         elif self.kind == "category":
             if attributes is None:
                 raise ValueError("kind='category' requires an AttributeTable")
@@ -142,6 +150,12 @@ class SIDTokenizer:
         rng = np.random.default_rng(self.random_state)
         size = min(self.codebook_size, max(num_items, 2))
         return rng.integers(0, size, size=(num_items, self.num_levels))
+
+    def _fit_shuffled(self, texts: list[str]) -> np.ndarray:
+        """Real RQ codes, permuted across items: same tree shape, no semantics."""
+        codes = self._fit_rq(texts)
+        rng = np.random.default_rng(self.random_state)
+        return codes[rng.permutation(len(codes))]
 
     @staticmethod
     def _add_collision_codes(codes: np.ndarray) -> np.ndarray:
