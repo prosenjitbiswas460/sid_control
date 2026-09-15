@@ -1,0 +1,16 @@
+{
+  "num_items": 3668,
+  "num_users": 6040,
+  "splits": {
+    "train": 4832,
+    "val": 604,
+    "test": 604
+  },
+  "sid_length": 4,
+  "level_sizes": [
+    64,
+    64,
+    64,
+    30
+  ]
+}

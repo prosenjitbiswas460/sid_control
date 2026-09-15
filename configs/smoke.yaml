@@ -1,0 +1,45 @@
+# Tiny MovieLens run for wiring checks. Numbers are meaningless.
+seed: 42
+device: cpu
+
+dataset: ml-1m
+dataset_kwargs:
+  data_dir: data/ml-1m
+  min_user_interactions: 20
+  min_item_interactions: 50
+  attr_min_count: 20
+
+sid:
+  num_levels: 3
+  codebook_size: 16
+  tfidf_dim: 32
+  embed_dim: 16
+
+tokenizers:
+  - {kind: rq, text_source: title}
+  - {kind: category, text_source: title}
+  - {kind: random, text_source: title}
+
+model:
+  d_model: 64
+  num_layers: 2
+  num_heads: 4
+  d_ff: 128
+  dropout: 0.1
+
+train:
+  epochs: 1
+  batch_size: 32
+  lr: 1.0e-3
+  warmup_steps: 10
+  early_stop_patience: 1
+  max_history_len: 10
+  max_examples_per_user: 2
+  num_workers: 0
+
+control:
+  beam_size: 12
+  topk: 5
+  max_users: 20
+  min_attr_count: 2
+  min_history: 2

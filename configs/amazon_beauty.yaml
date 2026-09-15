@@ -1,0 +1,54 @@
+# Amazon Beauty (2014 5-core), category taxonomy as the control attribute.
+seed: 42
+device: auto
+
+dataset: amazon-beauty
+dataset_kwargs:
+  data_dir: data/amazon
+  attribute_family: category   # or: brand
+  category_depth: 1
+  pos_threshold: 4.0
+  neg_threshold: 2.0
+  min_user_interactions: 5
+  min_item_interactions: 5
+  attr_min_count: 20
+  max_attrs: 40
+
+sid:
+  num_levels: 3
+  codebook_size: 256
+  tfidf_dim: 128
+  embed_dim: 64
+
+tokenizers:
+  - {kind: rq, text_source: title_side}
+  - {kind: rq, text_source: title_side_attr}
+  - {kind: category, text_source: title_side}
+  - {kind: random, text_source: title_side}
+
+model:
+  d_model: 256
+  num_layers: 4
+  num_heads: 6
+  d_ff: 1024
+  dropout: 0.1
+
+train:
+  epochs: 30
+  batch_size: 128
+  lr: 3.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_steps: 1000
+  early_stop_patience: 4
+  max_history_len: 20
+  max_examples_per_user: null
+  include_negatives: false
+  num_workers: 2
+
+control:
+  beam_size: 50
+  topk: 10
+  max_users: 1000
+  min_attr_count: 2
+  min_history: 3

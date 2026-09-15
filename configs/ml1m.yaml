@@ -1,0 +1,54 @@
+# MovieLens-1M, genres as the control attribute.
+seed: 42
+device: auto
+
+dataset: ml-1m
+dataset_kwargs:
+  data_dir: data/ml-1m
+  pos_threshold: 4.0
+  neg_threshold: 2.0
+  min_user_interactions: 5
+  min_item_interactions: 5
+  attr_min_count: 20
+
+sid:
+  num_levels: 3
+  codebook_size: 256
+  tfidf_dim: 128
+  embed_dim: 64
+
+# The four tokenizers bracket the question. `rq_title` is the honest system
+# under test; `rq_title_attr` shows what feeding the attribute into the
+# tokenizer buys; `category_title` is the upper bound; `random_title` the floor.
+tokenizers:
+  - {kind: rq, text_source: title}
+  - {kind: rq, text_source: title_attr}
+  - {kind: category, text_source: title}
+  - {kind: random, text_source: title}
+
+model:
+  d_model: 256
+  num_layers: 4
+  num_heads: 6
+  d_ff: 1024
+  dropout: 0.1
+
+train:
+  epochs: 20
+  batch_size: 128
+  lr: 3.0e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+  warmup_steps: 1000
+  early_stop_patience: 3
+  max_history_len: 20
+  max_examples_per_user: 20
+  include_negatives: false
+  num_workers: 2
+
+control:
+  beam_size: 50
+  topk: 10
+  max_users: 1000
+  min_attr_count: 3
+  min_history: 3
