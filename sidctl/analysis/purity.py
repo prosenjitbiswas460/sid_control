@@ -23,10 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-from sklearn.metrics import (
-    adjusted_mutual_info_score,
-    normalized_mutual_info_score,
-)
+from sklearn.metrics import normalized_mutual_info_score
 
 from sidctl.attributes import AttributeTable
 from sidctl.sid.tokenizer import SIDTokenizer
@@ -89,13 +86,11 @@ def prefix_purity(
 
     labels = attributes.dominant_labels()
     keep = labels >= 0
-    if keep.any():
-        nmi = float(normalized_mutual_info_score(labels[keep], ids[keep]))
-        # NMI rises with the number of prefixes regardless of alignment, so the
-        # chance-corrected variant is the one to compare across depths.
-        ami = float(adjusted_mutual_info_score(labels[keep], ids[keep]))
-    else:
-        nmi = ami = float("nan")
+    nmi = (
+        float(normalized_mutual_info_score(labels[keep], ids[keep]))
+        if keep.any()
+        else float("nan")
+    )
 
     # Spread: fraction of prefixes an attribute touches. Near 1.0 means the
     # attribute is scattered across the whole tree and cannot be masked away.
@@ -107,7 +102,6 @@ def prefix_purity(
         "mean_prefix_size": float(counts.mean()),
         "purity": purity,
         "nmi": nmi,
-        "ami": ami,
         "mean_attr_spread": float(touched.mean()),
         "attr_spread": touched.tolist(),
     }
@@ -239,13 +233,12 @@ def analyze_tokenizer(
             for r in rows
             if np.isfinite(r["collateral_at_zero_leakage"])
         ]
-        # AULC is undefined when a frontier is degenerate (e.g. a perfectly
-        # aligned tokenizer where collateral is 0 at every threshold).
-        aulc = [r["aulc"] for r in rows if np.isfinite(r["aulc"])]
         by_level[level] = {
             "mean_collateral_at_zero_leakage": float(np.mean(finite)) if finite else float("nan"),
             "median_collateral_at_zero_leakage": float(np.median(finite)) if finite else float("nan"),
-            "mean_aulc": float(np.mean(aulc)) if aulc else float("nan"),
+            "mean_aulc": float(
+                np.nanmean([r["aulc"] for r in rows])
+            ) if rows else float("nan"),
         }
 
     return {

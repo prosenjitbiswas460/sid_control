@@ -7,9 +7,7 @@ set -euo pipefail
 SNAP="http://snap.stanford.edu/data/amazon/productGraph/categoryFiles"
 
 fetch() {  # fetch <url> <dest>
-  # Always hand off to `wget -c`: it resumes partial files and is a no-op when
-  # the download is already complete. An "exists and non-empty" guard here would
-  # silently accept a truncated file from an interrupted run.
+  if [[ -s "$2" ]]; then echo "have $2"; return; fi
   mkdir -p "$(dirname "$2")"
   echo "fetching $1"
   wget -c -O "$2" "$1"

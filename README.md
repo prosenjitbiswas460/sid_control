@@ -43,17 +43,7 @@ delete to *fully* honour the request. Four tokenizers bracket the answer:
 | `rq_title` | the honest system under test, no attribute leakage into the SID |
 | `rq_title_attr` | what feeding the attribute into the tokenizer buys you |
 | `category_title` | upper bound: level 0 *is* the attribute by construction |
-| `shuffled_title` | **the null model**: real RQ codes with the item assignment permuted |
-| `random_title` | uniform codes; *not* granularity-matched, see below |
-
-The `shuffled` null is essential. `collateral@0leak` is confounded by prefix
-granularity: uniform random codes give almost one prefix per item, so a "prefix
-ban" degenerates into an item blacklist and scores near-zero collateral while
-providing no control at all. Permuting the real RQ table preserves the prefix
-size distribution exactly, so the `rq` vs `shuffled` gap isolates semantic
-alignment. For the same reason, purity is reported alongside **AMI**
-(chance-corrected mutual information): raw purity is inflated by attribute base
-rates, and NMI grows with the number of prefixes.
+| `random_title` | lower bound: prefixes carry no attribute information |
 
 **Part B (needs one trained model per tokenizer).** Budget-matched decoders,
 each enforcing the same constraint in a different place:
@@ -72,56 +62,12 @@ the banned attribute. A perfect control surface would therefore lose no accuracy
 at all, so the reported `retain` (NDCG retention) is a direct measure of
 collateral damage rather than a conflict with the user's real preference.
 
-## Findings so far
-
-Part A is complete on two datasets, and the answer is **conditional, not a flat
-negative**. Prefix controllability is governed by whether the attribute is a
-*partition* of the catalog, not by the SID hierarchy.
-
-All numbers are level-1 (`title`-only tokenizer, so text richness is matched
-across datasets), against the granularity-matched `shuffled` null whose prefix
-size distribution is identical to `rq` by construction.
-
-| dataset | attribute | labels/item | multi-label | upper-bound collateral | rq collateral | null collateral | rq gap | rq AMI |
-|---|---|---|---|---|---|---|---|---|
-| Amazon Beauty (12086) | 6 categories | **1.000** | 0.0% | 0.000 | 0.533 | 0.962 | **0.429** | 0.241 |
-| Amazon Sports (17833) | 14 categories | **1.099** | 4.8% | 0.088 | 0.486 | 0.840 | **0.354** | 0.212 |
-| MovieLens-1M (3416) | 18 genres | **1.707** | 51.5% | 0.238 | 0.654 | 0.698 | **0.044** | 0.041 |
-
-1. **Label overlap, not the SID hierarchy, sets the cost of prefix control.**
-   The upper bound -- a tokenizer whose level-1 code *is* the attribute -- tracks
-   labels/item almost exactly: 1.000 to 0.000 collateral, 1.099 to 0.088, 1.707
-   to 0.238. Overlap imposes a floor that no tokenizer can beat, because banning
-   one label necessarily bans the co-occurring labels of the same items.
-2. **RQ prefixes are attribute-aligned only when the attribute is a
-   partition.** On Beauty and Sports the gap over the null is large (0.43,
-   0.35). On MovieLens it collapses to 0.044 with AMI 0.041, i.e. RQ level-1
-   codes are statistically indistinguishable from a permutation that destroys
-   all semantics, and suppressing one genre destroys 65% of the acceptable
-   catalog.
-3. **It is not a text-richness artifact.** These rows use titles only. Adding
-   Amazon descriptions moves Beauty from 0.533 to 0.470 collateral -- a small
-   effect next to the cross-dataset spread.
-4. **Purity and NMI would have hidden this.** On MovieLens `rq_title` scores
-   0.468 purity against 0.438 for the null, because Drama alone covers 39% of the
-   catalog. Chance correction is what exposes the gap as near-zero, and raw NMI
-   additionally inflates with prefix count.
-5. **Attribute supervision helps where the content signal is weak.** Putting
-   attribute names into the tokenizer text lifts level-1 AMI from 0.041 to 0.297
-   on MovieLens and from 0.212 to 0.362 on Sports.
-
-Part B (decoding cost) still needs a trained model per tokenizer; see below.
-
 ## Setup
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
-
-The existing `.venv` was created under the repo's former name, so its console
-scripts have stale shebangs. Use `.venv/bin/python -m pip ...` and
-`.venv/bin/python -m pytest ...`, or recreate the environment.
 
 ## Datasets
 

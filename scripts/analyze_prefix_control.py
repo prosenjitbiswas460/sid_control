@@ -36,17 +36,8 @@ def main() -> None:
     attributes = corpus.attributes
     attrs = attributes.controllable_attrs()
 
-    print(
-        f"dataset={dataset}  items={corpus.num_items}  "
-        f"attrs_tested={len(attrs)}\n"
-        f"labels_per_item={attributes.labels_per_item():.3f}  "
-        f"multi_label_items={attributes.cooccurrence_rate():.3f}"
-    )
-    if attributes.labels_per_item() > 1.01:
-        print(
-            "  note: attribute is not a partition, so exact prefix-level\n"
-            "        control is unattainable even for a perfect tokenizer"
-        )
+    print(f"dataset={dataset}  items={corpus.num_items}  "
+          f"attrs_tested={len(attrs)}")
     if not attrs:
         raise SystemExit(
             "no attributes in the controllable prevalence band; loosen "
@@ -75,11 +66,10 @@ def main() -> None:
             row = {
                 "tokenizer": tag,
                 "level": level,
-                "prefixes": p["num_prefixes"],
-                "size": round(p["mean_prefix_size"], 1),
+                "num_prefixes": p["num_prefixes"],
                 "purity": round(p["purity"], 4),
-                "ami": round(p["ami"], 4),
-                "spread": round(p["mean_attr_spread"], 4),
+                "nmi": round(p["nmi"], 4),
+                "attr_spread": round(p["mean_attr_spread"], 4),
                 "collateral@0leak": round(
                     agg["mean_collateral_at_zero_leakage"], 4
                 ),
@@ -93,15 +83,8 @@ def main() -> None:
 
     out = Path(args.results) / dataset
     save_json(
-        {
-            "dataset": dataset,
-            "num_items": corpus.num_items,
-            "attrs_tested": [attributes.names[a] for a in attrs],
-            "labels_per_item": attributes.labels_per_item(),
-            "multi_label_items": attributes.cooccurrence_rate(),
-            "table": table_rows,
-            "detail": all_results,
-        },
+        {"dataset": dataset, "attrs_tested": [attributes.names[a] for a in attrs],
+         "table": table_rows, "detail": all_results},
         out / "part_a_prefix_control.json",
     )
     print(f"\nwrote {out / 'part_a_prefix_control.json'}")

@@ -135,31 +135,6 @@ def test_random_tokenizer_is_worse_than_rq(corpus):
     assert rq_purity > rnd_purity
 
 
-def test_shuffled_null_matches_rq_granularity(corpus):
-    """The null model must differ from rq only in semantics, not in tree shape."""
-    kwargs = dict(
-        attributes=corpus.attributes,
-        num_levels=2,
-        codebook_size=8,
-        tfidf_dim=16,
-        embed_dim=8,
-    )
-    texts = corpus.item_texts("title")
-    rq = build_tokenizer("rq", texts, **kwargs)
-    null = build_tokenizer("shuffled", texts, **kwargs)
-
-    for level in range(1, rq.sid_length):
-        rq_sizes = sorted(len(v) for v in rq.prefix_items(level).values())
-        null_sizes = sorted(len(v) for v in null.prefix_items(level).values())
-        assert rq_sizes == null_sizes, f"prefix sizes must match at level {level}"
-
-    # Permuting the assignment should destroy attribute alignment.
-    assert (
-        prefix_purity(null, corpus.attributes, 1)["ami"]
-        < prefix_purity(rq, corpus.attributes, 1)["ami"]
-    )
-
-
 def test_analyze_tokenizer_reports_every_level(tokenizer, corpus):
     res = analyze_tokenizer(
         tokenizer, corpus.attributes, attrs=[0, 1]

@@ -21,13 +21,9 @@ sid:
   embed_dim: 64
 
 tokenizers:
-  # title-only isolates text richness: MovieLens has no descriptions, so the
-  # cross-dataset comparison is only fair against this row.
-  - {kind: rq, text_source: title}
   - {kind: rq, text_source: title_side}
   - {kind: rq, text_source: title_side_attr}
   - {kind: category, text_source: title_side}
-  - {kind: shuffled, text_source: title_side}   # granularity-matched null
   - {kind: random, text_source: title_side}
 
 model:
