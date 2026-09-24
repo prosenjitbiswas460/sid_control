@@ -159,7 +159,27 @@ def realizability_frontier(
     share of ``attr`` items inside it is at least ``tau``. Small ``tau`` bans
     aggressively (no leakage, much collateral); ``tau`` near 1 bans only
     attribute-pure prefixes (little collateral, much leakage).
+
+    Tiled tokenizers use a per-attribute control *channel* (tiles whose first
+    code is that attribute) and AND membership: an item is removed if any of
+    its tiles carries a banned prefix. That is the Proposal-2 control rule.
     """
+    if tokenizer.is_tiled:
+        return _tiled_and_frontier(
+            tokenizer, attributes, attr, level, thresholds
+        )
+    return _single_sid_frontier(
+        tokenizer, attributes, attr, level, thresholds
+    )
+
+
+def _single_sid_frontier(
+    tokenizer: SIDTokenizer,
+    attributes: AttributeTable,
+    attr: int,
+    level: int,
+    thresholds: list[float] | None = None,
+) -> Frontier:
     thresholds = thresholds or DEFAULT_THRESHOLDS
     ids, num_prefixes = _prefix_index(tokenizer, level)
 
@@ -197,6 +217,64 @@ def realizability_frontier(
                 "banned_prefixes": int(banned.sum()),
                 "prefix_ban_rate": float(banned.sum() / max(num_prefixes, 1)),
                 "catalog_retained": float((~removed_item).mean()),
+                "control_semantics": "single_sid",
+            }
+        )
+    return frontier
+
+
+def _tiled_and_frontier(
+    tokenizer: SIDTokenizer,
+    attributes: AttributeTable,
+    attr: int,
+    level: int,
+    thresholds: list[float] | None = None,
+) -> Frontier:
+    """Channel-aware AND frontier for multi-label tiled identifiers."""
+    thresholds = thresholds or DEFAULT_THRESHOLDS
+    is_attr = attributes.matrix[:, attr]
+    n_attr = float(is_attr.sum())
+    n_clean = float((~is_attr).sum())
+    n_items = attributes.num_items
+
+    frontier = Frontier(
+        attr=attr,
+        attr_name=attributes.names[attr],
+        level=level,
+        prevalence=float(n_attr / max(n_items, 1)),
+    )
+    if n_attr == 0 or n_clean == 0:
+        return frontier
+
+    groups = tokenizer.channel_prefix_items(attr, level)
+    n_prefixes = max(len(groups), 1)
+
+    for tau in thresholds:
+        banned: set[tuple] = set()
+        for prefix, items in groups.items():
+            hits = float(is_attr[items].sum())
+            share = hits / max(len(items), 1)
+            if hits > 0 and share >= tau:
+                banned.add(prefix)
+
+        removed = np.zeros(n_items, dtype=bool)
+        for i in range(n_items):
+            for sid in tokenizer.iter_sids(i):
+                if sid[:level] in banned:
+                    removed[i] = True
+                    break
+
+        leakage = float((is_attr & ~removed).sum() / n_attr)
+        collateral = float(((~is_attr) & removed).sum() / n_clean)
+        frontier.points.append(
+            {
+                "tau": float(tau),
+                "leakage": leakage,
+                "collateral": collateral,
+                "banned_prefixes": len(banned),
+                "prefix_ban_rate": float(len(banned) / n_prefixes),
+                "catalog_retained": float((~removed).mean()),
+                "control_semantics": "tiled_and",
             }
         )
     return frontier

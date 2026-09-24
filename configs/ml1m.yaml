@@ -17,13 +17,16 @@ sid:
   tfidf_dim: 128
   embed_dim: 64
 
-# The four tokenizers bracket the question. `rq_title` is the honest system
-# under test; `rq_title_attr` shows what feeding the attribute into the
-# tokenizer buys; `category_title` is the upper bound; `random_title` the floor.
+# The tokenizers bracket the question. `rq_title` is the honest system under
+# test; `rq_title_attr` shows what feeding the attribute into the tokenizer
+# buys; `category_title` is the single-label upper bound (multi-label floor);
+# `tiled_title` is Proposal 2 (one control tile per genre, AND ban);
+# `random_title` the floor.
 tokenizers:
   - {kind: rq, text_source: title}
   - {kind: rq, text_source: title_attr}
   - {kind: category, text_source: title}
+  - {kind: tiled, text_source: title}
   - {kind: random, text_source: title}
 
 model:
@@ -45,6 +48,9 @@ train:
   max_examples_per_user: 20
   include_negatives: false
   num_workers: 2
+  # Tiled SIDs: train on every tile of the target ("all") so the model can
+  # generate any control path. History still uses the primary (rarest) tile.
+  tile_targets: all
 
 control:
   beam_size: 50

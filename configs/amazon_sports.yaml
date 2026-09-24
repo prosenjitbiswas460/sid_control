@@ -24,6 +24,7 @@ tokenizers:
   - {kind: rq, text_source: title_side}
   - {kind: rq, text_source: title_side_attr}
   - {kind: category, text_source: title_side}
+  - {kind: tiled, text_source: title_side}
   - {kind: random, text_source: title_side}
 
 model:
@@ -45,6 +46,7 @@ train:
   max_examples_per_user: null
   include_negatives: false
   num_workers: 2
+  tile_targets: all
 
 control:
   beam_size: 50

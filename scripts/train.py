@@ -54,6 +54,7 @@ def main() -> None:
         **common,
         split="train",
         max_examples_per_user=tcfg.get("max_examples_per_user"),
+        tile_targets=tcfg.get("tile_targets", "all"),
     )
     val_ds = GRDataset(**common, split="val")
 

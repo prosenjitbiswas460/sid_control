@@ -14,12 +14,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sidctl.analysis import analyze_tokenizer, prefix_purity, realizability_frontier
 from sidctl.attributes import AttributeTable
 from sidctl.control import DEFAULT_DECODERS, MaskCache, build_prefix_mask, decode
+from sidctl.control.masks import item_has_banned_tile
 from sidctl.control.protocol import build_control_instances
 from sidctl.data import GRDataset, build_vocab, collate_fn
 from sidctl.data.corpus import Corpus, build_attribute_matrix, split_users
 from sidctl.eval import evaluate_control
 from sidctl.models import TigerGR
-from sidctl.sid import build_tokenizer
+from sidctl.sid import SIDTokenizer, build_tokenizer
 
 NUM_ITEMS = 120
 NUM_USERS = 40
@@ -262,3 +263,111 @@ def test_mask_cache_memoises(corpus, tokenizer):
     a = cache.prefix_mask(0, 1)
     b = cache.prefix_mask(0, 1)
     assert a is b
+
+
+def _multilabel_catalog():
+    """Comedy-only, horror-only, and comedy+horror — the Proposal 2 stress case."""
+    n = 40
+    names = (
+        [["comedy"]] * n
+        + [["horror"]] * n
+        + [["comedy", "horror"]] * n
+    )
+    titles = [f"movie {i} {' '.join(names[i])}" for i in range(3 * n)]
+    attributes = build_attribute_matrix(names, min_count=1)
+    return titles, attributes
+
+
+def _tok_kwargs():
+    return dict(num_levels=2, codebook_size=8, tfidf_dim=16, embed_dim=8, random_state=0)
+
+
+def test_tiled_assigns_one_tile_per_label():
+    titles, attributes = _multilabel_catalog()
+    tok = build_tokenizer("tiled", titles, attributes=attributes, **_tok_kwargs())
+    assert tok.is_tiled
+    n = 40
+    for i in range(n):
+        assert len(tok.iter_sids(i)) == 1
+    for i in range(2 * n, 3 * n):
+        assert len(tok.iter_sids(i)) == 2
+    all_sids = [sid for i in range(tok.num_items) for sid in tok.iter_sids(i)]
+    assert len(all_sids) == len(set(all_sids))
+    assert len(tok.sid_to_item) == len(all_sids)
+    purity = prefix_purity(tok, attributes, level=1)
+    assert purity["purity"] == pytest.approx(1.0)
+
+
+def test_tiled_removes_multilabel_floor():
+    titles, attributes = _multilabel_catalog()
+    kwargs = dict(attributes=attributes, **_tok_kwargs())
+    category = build_tokenizer("category", titles, **kwargs)
+    tiled = build_tokenizer("tiled", titles, **kwargs)
+    horror = attributes.names.index("horror")
+    cat_coll = realizability_frontier(category, attributes, horror, 1).collateral_at(0.0)
+    tiled_coll = realizability_frontier(tiled, attributes, horror, 1).collateral_at(0.0)
+    tiled_leak = realizability_frontier(tiled, attributes, horror, 1).points[0]["leakage"]
+    assert cat_coll > 0.2, "single-label category codes must pay the overlap floor"
+    assert tiled_coll == pytest.approx(0.0)
+    assert tiled_leak == pytest.approx(0.0)
+
+
+def test_tiled_prefix_ban_and_semantics(corpus):
+    tok = build_tokenizer(
+        "tiled",
+        corpus.item_texts("title"),
+        attributes=corpus.attributes,
+        **_tok_kwargs(),
+    )
+    banned = build_prefix_mask(tok, corpus.attributes, attr=0, level=1, tau=0.0)
+    assert banned
+    for i in range(corpus.num_items):
+        if corpus.attributes.has(i, 0):
+            assert item_has_banned_tile(tok, i, banned, 1)
+        else:
+            assert not item_has_banned_tile(tok, i, banned, 1)
+
+    vocab = build_vocab(tok)
+    model = TigerGR(
+        vocab_size=vocab.vocab_size,
+        sid_length=tok.sid_length,
+        level_sizes=tok.level_sizes,
+        d_model=32,
+        num_layers=1,
+        num_heads=2,
+        d_ff=64,
+    )
+    ds = GRDataset(corpus, tok, vocab, split="test", max_history_len=5)
+    input_ids = torch.tensor([ds[0]["input_ids"]])
+    attn = torch.ones_like(input_ids)
+    out = model.beam_search(
+        input_ids, attn, tok.prefix_trie, beam_size=8, banned_prefixes=banned
+    )
+    for sid, _ in out:
+        assert sid[:1] not in banned
+        item = tok.sid_to_item[sid]
+        # Prefix-only generation can still surface a multi-label item via
+        # another tile; AND membership is applied in decode().
+        if not item_has_banned_tile(tok, item, banned, 1):
+            assert not corpus.attributes.has(item, 0)
+
+    cache = MaskCache(tok, corpus.attributes)
+    spec = [s for s in DEFAULT_DECODERS if s.name == "prefix_mask_l1"][0]
+    result = decode(
+        model, tok, input_ids, attn, spec, attr=0,
+        mask_cache=cache, beam_size=8, topk=5,
+    )
+    for item in result.items:
+        assert not corpus.attributes.has(item, 0)
+
+
+def test_tiled_save_load_roundtrip(tmp_path):
+    titles, attributes = _multilabel_catalog()
+    tok = build_tokenizer("tiled", titles, attributes=attributes, **_tok_kwargs())
+    path = tmp_path / "tokenizer.pkl"
+    tok.save(path)
+    loaded = SIDTokenizer.load(path)
+    assert loaded.is_tiled
+    assert loaded.num_items == tok.num_items
+    assert loaded.iter_sids(80) == tok.iter_sids(80)
+    assert loaded.sid_to_item[tok.iter_sids(80)[1]] == 80

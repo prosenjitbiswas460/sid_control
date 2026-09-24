@@ -36,13 +36,14 @@ sweep a masking threshold and record two quantities per attribute and depth:
 
 A perfect control surface reaches zero leakage at zero collateral. The headline
 number is `collateral@0leak`: what fraction of the acceptable catalog you must
-delete to *fully* honour the request. Four tokenizers bracket the answer:
+delete to *fully* honour the request. Tokenizers bracket the answer:
 
 | tokenizer | role |
 |---|---|
 | `rq_title` | the honest system under test, no attribute leakage into the SID |
 | `rq_title_attr` | what feeding the attribute into the tokenizer buys you |
-| `category_title` | upper bound: level 0 *is* the attribute by construction |
+| `category_title` | single-label upper bound: level 0 *is* the dominant attribute |
+| `tiled_title` | Proposal 2: one control tile per attribute; AND ban (multi-label fix) |
 | `random_title` | lower bound: prefixes carry no attribute information |
 
 **Part B (needs one trained model per tokenizer).** Budget-matched decoders,
@@ -103,6 +104,12 @@ Part A alone answers the go/no-go question and needs no GPU:
 PART_A_ONLY=1 ./scripts/run_all.sh configs/ml1m.yaml
 ```
 
+MovieLens Part B for the tiled tokenizer only:
+
+```bash
+TRAIN_TOKENIZERS="tiled_title" ./scripts/run_all.sh configs/ml1m.yaml
+```
+
 Full pipeline for one dataset:
 
 ```bash
@@ -118,6 +125,14 @@ python scripts/train.py                 --config configs/ml1m.yaml --tokenizer r
 python scripts/run_control_eval.py      --config configs/ml1m.yaml --tokenizer rq_title
 python scripts/make_figures.py          --config configs/ml1m.yaml
 python scripts/summarize.py             --config configs/ml1m.yaml
+```
+
+Part B for Proposal 2 (tiled identifiers on MovieLens):
+
+```bash
+python scripts/train.py            --config configs/ml1m.yaml --tokenizer tiled_title
+python scripts/run_control_eval.py --config configs/ml1m.yaml --tokenizer tiled_title
+python scripts/summarize.py        --config configs/ml1m.yaml
 ```
 
 ## Reading the output
@@ -145,7 +160,7 @@ Figures land in `figures/<dataset>/`:
 sidctl/
   attributes/   item x attribute incidence table (the control ground truth)
   data/         MovieLens + Amazon loaders, corpus container, leave-one-out splits
-  sid/          RQ-KMeans and the three tokenizer variants
+  sid/          RQ-KMeans and tokenizer variants (rq, category, tiled, random)
   analysis/     Part A: prefix purity and the realisability frontier
   control/      prefix masks, constraint-selection protocol, decoders
   models/       TIGER-style T5 with trie-constrained, ban-aware beam search

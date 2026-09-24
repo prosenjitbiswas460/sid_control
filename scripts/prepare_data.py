@@ -89,6 +89,7 @@ def main() -> None:
             tfidf_dim=sid_cfg.get("tfidf_dim", 128),
             embed_dim=sid_cfg.get("embed_dim", 64),
             random_state=cfg.get("seed", 42),
+            max_tiles=spec.get("max_tiles"),
         )
         tok.save(tok_path)
         tstats = tok.stats() | {"text_source": text_source}

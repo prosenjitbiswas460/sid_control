@@ -2,10 +2,10 @@
 """Part A: prefix purity and the control realisability frontier. No GPU needed.
 
 This is the go/no-go experiment. If a real RQ tokenizer sits close to the
-``category`` upper bound, prefix masking is a usable control surface and the
-paper reports a mechanism. If it sits close to the ``random`` lower bound,
-hierarchical Semantic IDs do not give controllability for free, and the paper
-reports that instead.
+``category`` or ``tiled`` upper bound, prefix masking is a usable control
+surface. ``tiled`` is the multi-label upper bound (one control tile per
+attribute, AND ban). If RQ sits close to the ``random`` lower bound,
+hierarchical Semantic IDs do not give controllability for free.
 """
 
 from __future__ import annotations

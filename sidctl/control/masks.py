@@ -22,8 +22,18 @@ def build_prefix_mask(
     item and the share of such items reaches ``tau``. ``tau=0`` bans every
     prefix that touches the attribute, which guarantees zero leakage and is the
     setting a system would need to actually honour the constraint.
+
+    Tiled identifiers restrict the sweep to the attribute's own control
+    channel (tiles whose first code *is* that attribute). Mixing every tile
+    into one prefix map would re-create the multi-label floor: a comedy
+    prefix would contain horror-comedies and get banned when the user asked
+    to avoid horror.
     """
-    groups = tokenizer.prefix_items(level)
+    groups = (
+        tokenizer.channel_prefix_items(attr, level)
+        if tokenizer.is_tiled
+        else tokenizer.prefix_items(level)
+    )
     is_attr = attributes.matrix[:, attr]
 
     banned = set()
@@ -34,6 +44,21 @@ def build_prefix_mask(
     return banned
 
 
+def item_has_banned_tile(
+    tokenizer: SIDTokenizer,
+    item: int,
+    banned: set[tuple],
+    level: int,
+) -> bool:
+    """True if any SID of ``item`` starts with a banned prefix (AND rule)."""
+    if not banned:
+        return False
+    for sid in tokenizer.iter_sids(item):
+        if sid[:level] in banned:
+            return True
+    return False
+
+
 def mask_effect(
     tokenizer: SIDTokenizer,
     attributes: AttributeTable,
@@ -42,19 +67,24 @@ def mask_effect(
     level: int,
 ) -> dict:
     """Catalog-level consequences of a mask, independent of any model."""
-    prefixes = tokenizer.item_prefixes(level)
-    removed = np.array(
-        [tuple(int(v) for v in row) in banned for row in prefixes], dtype=bool
-    )
     is_attr = attributes.matrix[:, attr]
     n_attr = max(int(is_attr.sum()), 1)
     n_clean = max(int((~is_attr).sum()), 1)
+
+    removed = np.array(
+        [
+            item_has_banned_tile(tokenizer, i, banned, level)
+            for i in range(attributes.num_items)
+        ],
+        dtype=bool,
+    )
     return {
         "level": level,
         "banned_prefixes": len(banned),
         "leakage": float((is_attr & ~removed).sum() / n_attr),
         "collateral": float(((~is_attr) & removed).sum() / n_clean),
         "catalog_retained": float((~removed).mean()),
+        "control_semantics": "tiled_and" if tokenizer.is_tiled else "single_sid",
     }
 
 

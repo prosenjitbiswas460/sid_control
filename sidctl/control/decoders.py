@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import torch
 
-from sidctl.control.masks import MaskCache
+from sidctl.control.masks import MaskCache, item_has_banned_tile
 from sidctl.models.tiger import TigerGR
 from sidctl.sid.tokenizer import SIDTokenizer
 
@@ -46,7 +46,8 @@ DEFAULT_DECODERS: list[DecoderSpec] = [
     DecoderSpec(
         name="prefix_mask_l1",
         mask_level=1,
-        description="ban every level-1 prefix touching the attribute",
+        description="ban every level-1 prefix touching the attribute "
+        "(tiled: AND — drop the item if any tile is banned)",
     ),
     DecoderSpec(
         name="prefix_mask_l2",
@@ -117,6 +118,17 @@ def decode(
             continue
         seen.add(item)
         if item in drop:
+            continue
+        # Tiled AND: a horror-comedy generated via its comedy tile is still
+        # excluded when horror prefixes are banned. No-op for single-SID kinds.
+        if (
+            banned_prefixes
+            and spec.mask_level is not None
+            and tokenizer.is_tiled
+            and item_has_banned_tile(
+                tokenizer, item, banned_prefixes, spec.mask_level
+            )
+        ):
             continue
         items.append(item)
         if len(items) >= topk:

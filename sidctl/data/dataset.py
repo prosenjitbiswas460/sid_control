@@ -48,6 +48,7 @@ class GRDataset(Dataset):
         include_negatives: bool = False,
         max_examples_per_user: int | None = None,
         user_ids: list[int] | None = None,
+        tile_targets: Literal["primary", "all"] = "primary",
     ):
         self.examples: list[GRExample] = []
         users = user_ids if user_ids is not None else sorted(corpus.user_events)
@@ -81,12 +82,18 @@ class GRDataset(Dataset):
                 )
                 if not input_ids:
                     continue
-                target_ids = vocab.sid_to_ids(
-                    tokenizer.get_sid(events[t]["item_idx"])
-                )
-                self.examples.append(
-                    GRExample(input_ids=input_ids, labels=target_ids)
-                )
+                item_idx = events[t]["item_idx"]
+                if tile_targets == "all":
+                    target_sids = tokenizer.iter_sids(item_idx)
+                else:
+                    target_sids = [tokenizer.get_sid(item_idx)]
+                for sid in target_sids:
+                    self.examples.append(
+                        GRExample(
+                            input_ids=input_ids,
+                            labels=vocab.sid_to_ids(sid),
+                        )
+                    )
 
     def __len__(self) -> int:
         return len(self.examples)

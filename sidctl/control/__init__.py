@@ -8,6 +8,7 @@ from sidctl.control.masks import (
     MaskCache,
     banned_items,
     build_prefix_mask,
+    item_has_banned_tile,
     mask_effect,
 )
 from sidctl.control.protocol import (
@@ -24,6 +25,7 @@ __all__ = [
     "MaskCache",
     "banned_items",
     "build_prefix_mask",
+    "item_has_banned_tile",
     "mask_effect",
     "ControlInstance",
     "build_control_instances",

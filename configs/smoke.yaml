@@ -18,6 +18,7 @@ sid:
 tokenizers:
   - {kind: rq, text_source: title}
   - {kind: category, text_source: title}
+  - {kind: tiled, text_source: title}
   - {kind: random, text_source: title}
 
 model:
