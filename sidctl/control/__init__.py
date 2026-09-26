@@ -7,6 +7,7 @@ from sidctl.control.decoders import (
 from sidctl.control.masks import (
     MaskCache,
     banned_items,
+    build_majority_mask,
     build_prefix_mask,
     item_has_banned_tile,
     mask_effect,
@@ -24,6 +25,7 @@ __all__ = [
     "decode",
     "MaskCache",
     "banned_items",
+    "build_majority_mask",
     "build_prefix_mask",
     "item_has_banned_tile",
     "mask_effect",

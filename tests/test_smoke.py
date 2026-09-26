@@ -5,16 +5,23 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from collections import defaultdict
+
 import numpy as np
 import pytest
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sidctl.analysis import analyze_tokenizer, prefix_purity, realizability_frontier
+from sidctl.analysis import (
+    analyze_tokenizer,
+    evaluate_attr_policies,
+    prefix_purity,
+    realizability_frontier,
+)
 from sidctl.attributes import AttributeTable
 from sidctl.control import DEFAULT_DECODERS, MaskCache, build_prefix_mask, decode
-from sidctl.control.masks import item_has_banned_tile
+from sidctl.control.masks import build_majority_mask, item_has_banned_tile, mask_effect
 from sidctl.control.protocol import build_control_instances
 from sidctl.data import GRDataset, build_vocab, collate_fn
 from sidctl.data.corpus import Corpus, build_attribute_matrix, split_users
@@ -371,3 +378,76 @@ def test_tiled_save_load_roundtrip(tmp_path):
     assert loaded.num_items == tok.num_items
     assert loaded.iter_sids(80) == tok.iter_sids(80)
     assert loaded.sid_to_item[tok.iter_sids(80)[1]] == 80
+
+
+# ---------------------------------------------------------------------------
+# Frozen-prefix policies: P0 / Pτ / Pmaj
+# ---------------------------------------------------------------------------
+
+
+def _codes_tokenizer(l1: list[int]) -> SIDTokenizer:
+    """Hand-built L1 codes plus a collision suffix."""
+    n = len(l1)
+    table = np.zeros((n, 2), dtype=np.int64)
+    table[:, 0] = l1
+    seen: dict[int, int] = defaultdict(int)
+    for i, code in enumerate(l1):
+        table[i, 1] = seen[code]
+        seen[code] += 1
+    tok = SIDTokenizer(kind="rq", num_levels=1, codebook_size=8)
+    tok.sid_table = table
+    tok._build_trie()
+    return tok
+
+
+def test_p0_has_zero_leakage(tokenizer, corpus):
+    res = evaluate_attr_policies(tokenizer, corpus.attributes, attr=0, level=1)
+    assert res["p0"]["leakage"] == pytest.approx(0.0)
+    assert res["p0"]["coverage"] == pytest.approx(1.0)
+
+
+def test_pmaj_on_disjoint_category_is_free():
+    names = [["alpha"]] * 12 + [["beta"]] * 12 + [["gamma"]] * 12
+    titles = [f"item {i} {names[i][0]}" for i in range(len(names))]
+    attributes = build_attribute_matrix(names, min_count=1)
+    tok = build_tokenizer("category", titles, attributes=attributes, **_tok_kwargs())
+    alpha = attributes.names.index("alpha")
+    p0 = mask_effect(
+        tok, attributes, alpha, build_prefix_mask(tok, attributes, alpha, 1, 0.0), 1
+    )
+    pmaj = mask_effect(
+        tok, attributes, alpha, build_majority_mask(tok, attributes, alpha, 1), 1
+    )
+    assert p0["leakage"] == pytest.approx(0.0)
+    assert pmaj["leakage"] == pytest.approx(0.0)
+    assert pmaj["collateral"] == pytest.approx(0.0)
+    assert p0["collateral"] == pytest.approx(0.0)
+
+
+def test_pmaj_is_not_the_same_as_share_threshold():
+    """Plurality but not majority: Pmaj bans, Pτ@0.5 does not."""
+    names = (
+        [["alpha"]] * 5
+        + [["beta"]] * 4
+        + [["gamma"]] * 4
+        + [["beta"]] * 10
+        + [["gamma"]] * 10
+    )
+    codes = [0] * 13 + [1] * 10 + [2] * 10
+    attributes = build_attribute_matrix(names, min_count=1)
+    tok = _codes_tokenizer(codes)
+    alpha = attributes.names.index("alpha")
+    res = evaluate_attr_policies(tok, attributes, alpha, 1)
+    n_clean = 4 + 4 + 10 + 10
+    assert res["p0"]["leakage"] == pytest.approx(0.0)
+    assert res["pmaj"]["leakage"] == pytest.approx(0.0)
+    assert res["pmaj"]["collateral"] == pytest.approx(8 / n_clean)
+    assert res["ptau_05"]["leakage"] == pytest.approx(1.0)
+    assert res["ptau_05"]["collateral"] == pytest.approx(0.0)
+
+
+def test_majority_mask_cache(corpus, tokenizer):
+    cache = MaskCache(tokenizer, corpus.attributes)
+    a = cache.majority_mask(0, 1)
+    b = cache.majority_mask(0, 1)
+    assert a is b

@@ -56,6 +56,23 @@ def main() -> None:
             "",
         ]
 
+    policies = res_dir / "control_policies.json"
+    if policies.exists():
+        data = json.loads(policies.read_text())
+        out_lines += [
+            "## Table 1b -- P0 vs Pτ vs Pmaj on frozen prefixes",
+            "",
+            table(
+                data["table"],
+                "P0 is the zero-leak union (coll@0leak). Pmaj bans prefixes whose\n"
+                "majority attribute is forbidden. Pτ@0.5 bans if P(forbidden|prefix)≥0.5.\n"
+                "coverage = 1 − leakage.",
+            ),
+            "",
+            data.get("diagnosis", ""),
+            "",
+        ]
+
     rows_b = []
     for spec in cfg["tokenizers"]:
         tag = f"{spec['kind']}_{spec['text_source']}"
@@ -91,8 +108,16 @@ def main() -> None:
     report = "\n".join(out_lines)
     print(report)
     (res_dir / "summary.md").write_text(report)
-    save_json({"table1": json.loads(part_a.read_text())["table"] if part_a.exists() else [],
-               "table2": rows_b}, res_dir / "summary.json")
+    save_json(
+        {
+            "table1": json.loads(part_a.read_text())["table"] if part_a.exists() else [],
+            "table1b": (
+                json.loads(policies.read_text())["table"] if policies.exists() else []
+            ),
+            "table2": rows_b,
+        },
+        res_dir / "summary.json",
+    )
     print(f"\nwrote {res_dir / 'summary.md'}")
 
 

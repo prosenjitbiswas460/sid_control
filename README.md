@@ -98,6 +98,69 @@ Smoke test first (seconds, CPU):
 python -m pytest tests/test_smoke.py -q
 ```
 
+## Locked experiment: P0 vs Pτ vs Pmaj (Beauty first)
+
+Keep the frozen codebook. Change only the prefix-ban policy. No GPU, no
+retraining, no token-ID remapping (that cannot move leak or collateral).
+
+| policy | ban prefix `p` when |
+|---|---|
+| P0 | `p` contains any forbidden item (zero leak, current coll@0leak) |
+| Pτ | `P(forbidden \| p) ≥ τ` (sweep; headline point τ=0.5) |
+| Pmaj | unique majority attribute of `p` is the forbidden one |
+
+Needs `artifacts/<dataset>/corpus.pkl` and `artifacts/<dataset>/<tag>/tokenizer.pkl`.
+
+```bash
+# Beauty — the clean disjoint-category bound
+python scripts/eval_control_policies.py --config configs/amazon_beauty.yaml --levels 1
+
+# same command on the other catalogs after their tokenizers exist
+python scripts/eval_control_policies.py --config configs/amazon_sports.yaml --levels 1
+python scripts/eval_control_policies.py --config configs/ml1m.yaml --levels 1
+```
+
+Writes `results/<dataset>/control_policies.json`, `control_policies.md`, and
+`figures/<dataset>/fig4_policies.png`.
+
+If tokenizers are missing:
+
+```bash
+./scripts/download_data.sh beauty
+python scripts/prepare_data.py --config configs/amazon_beauty.yaml
+python scripts/eval_control_policies.py --config configs/amazon_beauty.yaml --levels 1
+```
+
+## Copy to a server
+
+Code only, if the server already has `data/` and `artifacts/` from Part A:
+
+```bash
+# from this repo root (code only; server already has data/ and artifacts/)
+rsync -avz \
+  --exclude '.venv' --exclude '.git' --exclude '__pycache__' \
+  --exclude '.pytest_cache' --exclude 'data' --exclude 'artifacts' \
+  --exclude 'results' --exclude 'figures' --exclude 'logs' --exclude 'checkpoints' \
+  ./ \
+  USER@SERVER:~/negative_evidence_gr/
+```
+
+If the server has neither data nor tokenizers, drop the `--exclude 'data'` and
+`--exclude 'artifacts'` flags, or rebuild on the server with `download_data.sh`
++ `prepare_data.py`.
+
+On the server:
+
+```bash
+cd ~/negative_evidence_gr
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest tests/test_smoke.py -q
+python scripts/eval_control_policies.py --config configs/amazon_beauty.yaml --levels 1
+```
+
+## Running the rest of the pipeline
+
 Part A alone answers the go/no-go question and needs no GPU:
 
 ```bash
@@ -119,12 +182,13 @@ Full pipeline for one dataset:
 Or step by step:
 
 ```bash
-python scripts/prepare_data.py          --config configs/ml1m.yaml
-python scripts/analyze_prefix_control.py --config configs/ml1m.yaml
-python scripts/train.py                 --config configs/ml1m.yaml --tokenizer rq_title
-python scripts/run_control_eval.py      --config configs/ml1m.yaml --tokenizer rq_title
-python scripts/make_figures.py          --config configs/ml1m.yaml
-python scripts/summarize.py             --config configs/ml1m.yaml
+python scripts/prepare_data.py            --config configs/ml1m.yaml
+python scripts/analyze_prefix_control.py  --config configs/ml1m.yaml
+python scripts/eval_control_policies.py   --config configs/ml1m.yaml --levels 1
+python scripts/train.py                   --config configs/ml1m.yaml --tokenizer rq_title
+python scripts/run_control_eval.py        --config configs/ml1m.yaml --tokenizer rq_title
+python scripts/make_figures.py            --config configs/ml1m.yaml
+python scripts/summarize.py               --config configs/ml1m.yaml
 ```
 
 Part B for Proposal 2 (tiled identifiers on MovieLens):
@@ -143,6 +207,12 @@ Table 1 is Part A. **`collateral@0leak` near 0 means prefix control is free;
 near 1 means it is a fiction.** Compare `rq_*` against `category_*` (upper
 bound) and `random_*` (floor); where `rq` falls between them is the paper.
 
+Table 1b is P0 vs Pτ vs Pmaj on the **same** frozen prefixes. P0 is coll@0leak.
+Pmaj bans prefixes whose majority attribute is the forbidden one. Pτ@0.5 bans
+if `P(forbidden|prefix) ≥ 0.5`. If Pmaj already sits near `category` at low
+leak, the partition is fine and only the interface was wrong. If P0 is expensive
+**and** Pmaj still has large collateral, the clusters are mixed.
+
 Table 2 is Part B. Since constraints are target-compatible, an ideal control
 surface shows `retain=1.000`, `viol=0.000`, `short=0.000`. Watch for the two
 distinct failure modes: prefix masking loses `retain`, post-filtering loses
@@ -153,6 +223,7 @@ Figures land in `figures/<dataset>/`:
 - `fig1_frontier.png` -- leakage vs collateral, one curve per depth
 - `fig2_depth_cost.png` -- the depth/precision trade-off, the paper's core figure
 - `fig3_control_cost_<tok>.png` -- NDCG retention vs violation rate per decoder
+- `fig4_policies.png` -- P0 / Pmaj / Pτ@0.5 on the frozen L1 codebook
 
 ## Layout
 
@@ -161,13 +232,14 @@ sidctl/
   attributes/   item x attribute incidence table (the control ground truth)
   data/         MovieLens + Amazon loaders, corpus container, leave-one-out splits
   sid/          RQ-KMeans and tokenizer variants (rq, category, tiled, random)
-  analysis/     Part A: prefix purity and the realisability frontier
+  analysis/     Part A: prefix purity, realisability frontier, P0/Pτ/Pmaj
   control/      prefix masks, constraint-selection protocol, decoders
   models/       TIGER-style T5 with trie-constrained, ban-aware beam search
   train/        training loop
   eval/         ranking metrics and the Part B control evaluation
-scripts/        prepare_data, analyze_prefix_control, train, run_control_eval,
-                make_figures, summarize, run_all.sh, download_data.sh
+scripts/        prepare_data, analyze_prefix_control, eval_control_policies,
+                train, run_control_eval, make_figures, summarize, run_all.sh,
+                download_data.sh
 configs/        smoke, ml1m, amazon_beauty, amazon_sports
 ```
 

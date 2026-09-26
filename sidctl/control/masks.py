@@ -44,6 +44,41 @@ def build_prefix_mask(
     return banned
 
 
+def build_majority_mask(
+    tokenizer: SIDTokenizer,
+    attributes: AttributeTable,
+    attr: int,
+    level: int,
+) -> set[tuple]:
+    """Ban prefixes whose unique majority attribute is ``attr``.
+
+    Occupancy of an attribute in a prefix is how many items under that prefix
+    carry it. The prefix is labelled with the unique argmax occupancy; ties
+    and empty prefixes get no majority and are left unbanned. This is the
+    only "remap" that can change leak or collateral: it changes which
+    prefixes are banned, not the integers written on the codes.
+
+    Tiled identifiers restrict the sweep to the attribute's control channel,
+    matching :func:`build_prefix_mask`.
+    """
+    groups = (
+        tokenizer.channel_prefix_items(attr, level)
+        if tokenizer.is_tiled
+        else tokenizer.prefix_items(level)
+    )
+    matrix = attributes.matrix
+    banned: set[tuple] = set()
+    for prefix, items in groups.items():
+        occupancy = matrix[items].sum(axis=0)
+        peak = int(occupancy.max())
+        if peak <= 0:
+            continue
+        winners = np.flatnonzero(occupancy == peak)
+        if len(winners) == 1 and int(winners[0]) == attr:
+            banned.add(prefix)
+    return banned
+
+
 def item_has_banned_tile(
     tokenizer: SIDTokenizer,
     item: int,
@@ -109,6 +144,7 @@ class MaskCache:
         self.tokenizer = tokenizer
         self.attributes = attributes
         self._prefix: dict[tuple[int, int, float], set[tuple]] = {}
+        self._majority: dict[tuple[int, int], set[tuple]] = {}
         self._items: dict[int, set[int]] = {}
 
     def prefix_mask(self, attr: int, level: int, tau: float = 0.0) -> set[tuple]:
@@ -118,6 +154,14 @@ class MaskCache:
                 self.tokenizer, self.attributes, attr, level, tau
             )
         return self._prefix[key]
+
+    def majority_mask(self, attr: int, level: int) -> set[tuple]:
+        key = (attr, level)
+        if key not in self._majority:
+            self._majority[key] = build_majority_mask(
+                self.tokenizer, self.attributes, attr, level
+            )
+        return self._majority[key]
 
     def item_mask(self, attr: int) -> set[int]:
         if attr not in self._items:

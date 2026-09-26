@@ -4,6 +4,7 @@
 fig1_frontier      leakage vs collateral, one curve per prefix depth, per tokenizer
 fig2_depth_cost    collateral at zero leakage against prefix depth
 fig3_control_cost  NDCG retention vs violation rate for each decoder (needs Part B)
+fig4_policies      P0 / Pτ / Pmaj on frozen prefixes (needs eval_control_policies)
 """
 
 from __future__ import annotations
@@ -133,6 +134,16 @@ def main() -> None:
             data = json.loads(path.read_text())
             fig_control_cost(data["per_decoder"], out, dataset, tag)
             print(f"wrote {out}/fig3_control_cost_{tag}.png")
+
+    policies = res_dir / "control_policies.json"
+    if policies.exists():
+        from sidctl.analysis.policies import fig_policies
+
+        data = json.loads(policies.read_text())
+        for level in data.get("levels", [1]):
+            path = fig_policies(data["detail"], out, dataset, level=int(level))
+            if path is not None:
+                print(f"wrote {path}")
 
 
 if __name__ == "__main__":
