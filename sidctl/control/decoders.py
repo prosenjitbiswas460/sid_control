@@ -26,6 +26,8 @@ class DecoderSpec:
     mask_level: int | None = None  # ban SID prefixes at this depth
     tau: float = 0.0  # ban prefixes whose attribute share reaches tau
     item_filter: bool = False  # drop violating items after generation
+    majority: bool = False  # Pmaj: ban prefixes whose majority label is attr
+    allowed_trie: bool = False  # search only SIDs of allowed items
     beam_multiplier: float = 1.0
     description: str = ""
 
@@ -75,9 +77,42 @@ DEFAULT_DECODERS: list[DecoderSpec] = [
         mask_level=1,
         item_filter=True,
         tau=0.5,
-        description="majority-attribute prefixes banned, remainder filtered",
+        description="share≥0.5 prefixes banned, remainder filtered",
+    ),
+    DecoderSpec(
+        name="pmaj_l1",
+        mask_level=1,
+        majority=True,
+        description="Pmaj: ban L1 prefixes whose unique majority attribute is forbidden",
+    ),
+    DecoderSpec(
+        name="allowed_trie",
+        allowed_trie=True,
+        description="beam search on the SID trie of allowed items only (dual of P0)",
     ),
 ]
+
+
+DECODER_BY_NAME = {s.name: s for s in DEFAULT_DECODERS}
+
+# Locked comparison: P0 vs Pmaj vs post-filter vs allowed-item trie.
+POLICY_DECODER_NAMES = (
+    "unconstrained",
+    "prefix_mask_l1",
+    "pmaj_l1",
+    "post_filter",
+    "allowed_trie",
+)
+
+
+def select_decoders(names: list[str] | None = None) -> list[DecoderSpec]:
+    if not names:
+        return list(DEFAULT_DECODERS)
+    missing = [n for n in names if n not in DECODER_BY_NAME]
+    if missing:
+        known = ", ".join(DECODER_BY_NAME)
+        raise SystemExit(f"unknown decoder(s) {missing}; known: {known}")
+    return [DECODER_BY_NAME[n] for n in names]
 
 
 def decode(
@@ -95,15 +130,23 @@ def decode(
     beam = max(int(round(beam_size * spec.beam_multiplier)), topk)
 
     banned_prefixes = None
-    if spec.mask_level is not None:
-        banned_prefixes = mask_cache.prefix_mask(attr, spec.mask_level, spec.tau)
+    trie = tokenizer.prefix_trie
+    if spec.allowed_trie:
+        trie = mask_cache.allowed_trie(attr)
+    elif spec.mask_level is not None:
+        if spec.majority:
+            banned_prefixes = mask_cache.majority_mask(attr, spec.mask_level)
+        else:
+            banned_prefixes = mask_cache.prefix_mask(
+                attr, spec.mask_level, spec.tau
+            )
         if not banned_prefixes:
             banned_prefixes = None
 
     scored = model.beam_search(
         input_ids,
         attention_mask,
-        tokenizer.prefix_trie,
+        trie,
         beam_size=beam,
         banned_prefixes=banned_prefixes,
         max_return=beam,

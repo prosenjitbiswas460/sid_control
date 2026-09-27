@@ -1,8 +1,10 @@
 from sidctl.control.decoders import (
     DEFAULT_DECODERS,
+    POLICY_DECODER_NAMES,
     DecodeResult,
     DecoderSpec,
     decode,
+    select_decoders,
 )
 from sidctl.control.masks import (
     MaskCache,
@@ -20,9 +22,11 @@ from sidctl.control.protocol import (
 
 __all__ = [
     "DEFAULT_DECODERS",
+    "POLICY_DECODER_NAMES",
     "DecodeResult",
     "DecoderSpec",
     "decode",
+    "select_decoders",
     "MaskCache",
     "banned_items",
     "build_majority_mask",

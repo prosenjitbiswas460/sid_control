@@ -9,7 +9,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sidctl.control import DEFAULT_DECODERS, build_control_instances, instance_stats  # noqa: E402
+from sidctl.control import (  # noqa: E402
+    DEFAULT_DECODERS,
+    POLICY_DECODER_NAMES,
+    build_control_instances,
+    instance_stats,
+    select_decoders,
+)
 from sidctl.data import build_vocab  # noqa: E402
 from sidctl.data.corpus import Corpus  # noqa: E402
 from sidctl.eval import evaluate_control  # noqa: E402
@@ -29,6 +35,12 @@ def main() -> None:
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-users", type=int, default=None)
     ap.add_argument("--beam-size", type=int, default=None)
+    ap.add_argument(
+        "--decoders",
+        default=None,
+        help="comma-separated decoder names. "
+        f"'policy' expands to {','.join(POLICY_DECODER_NAMES)}",
+    )
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -63,13 +75,23 @@ def main() -> None:
     if not instances:
         raise SystemExit("no eligible control instances")
 
+    if args.decoders is None:
+        specs = list(DEFAULT_DECODERS)
+    elif args.decoders.strip() == "policy":
+        specs = select_decoders(list(POLICY_DECODER_NAMES))
+    else:
+        specs = select_decoders(
+            [n.strip() for n in args.decoders.split(",") if n.strip()]
+        )
+    print("decoders: " + ", ".join(s.name for s in specs))
+
     results = evaluate_control(
         model=model,
         tokenizer=tok,
         vocab=vocab,
         corpus=corpus,
         instances=instances,
-        specs=DEFAULT_DECODERS,
+        specs=specs,
         beam_size=args.beam_size or ccfg.get("beam_size", 50),
         topk=ccfg.get("topk", 10),
         max_history_len=cfg.get("train", {}).get("max_history_len", 20),

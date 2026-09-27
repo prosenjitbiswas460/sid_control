@@ -146,6 +146,7 @@ class MaskCache:
         self._prefix: dict[tuple[int, int, float], set[tuple]] = {}
         self._majority: dict[tuple[int, int], set[tuple]] = {}
         self._items: dict[int, set[int]] = {}
+        self._allowed_trie: dict[int, list[dict[tuple, list[int]]]] = {}
 
     def prefix_mask(self, attr: int, level: int, tau: float = 0.0) -> set[tuple]:
         key = (attr, level, tau)
@@ -167,3 +168,20 @@ class MaskCache:
         if attr not in self._items:
             self._items[attr] = banned_items(self.attributes, attr)
         return self._items[attr]
+
+    def allowed_trie(self, attr: int) -> list[dict[tuple, list[int]]]:
+        """Trie over items that do *not* carry ``attr``.
+
+        Prefixes that mix allowed and forbidden items stay open. Paths that
+        can only complete to forbidden items are absent. This is the dual of
+        a P0 prefix ban.
+        """
+        if attr not in self._allowed_trie:
+            drop = self.item_mask(attr)
+            keep = [
+                i
+                for i in range(self.attributes.num_items)
+                if i not in drop
+            ]
+            self._allowed_trie[attr] = self.tokenizer.trie_for_items(keep)
+        return self._allowed_trie[attr]

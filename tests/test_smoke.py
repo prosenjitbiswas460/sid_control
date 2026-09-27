@@ -20,7 +20,13 @@ from sidctl.analysis import (
     realizability_frontier,
 )
 from sidctl.attributes import AttributeTable
-from sidctl.control import DEFAULT_DECODERS, MaskCache, build_prefix_mask, decode
+from sidctl.control import (
+    DEFAULT_DECODERS,
+    MaskCache,
+    build_prefix_mask,
+    decode,
+    select_decoders,
+)
 from sidctl.control.masks import build_majority_mask, item_has_banned_tile, mask_effect
 from sidctl.control.protocol import build_control_instances
 from sidctl.data import GRDataset, build_vocab, collate_fn
@@ -451,3 +457,51 @@ def test_majority_mask_cache(corpus, tokenizer):
     a = cache.majority_mask(0, 1)
     b = cache.majority_mask(0, 1)
     assert a is b
+
+
+def test_allowed_trie_keeps_mixed_prefixes_and_zero_leak():
+    """P0 closes a mixed L1 bucket; the allowed trie keeps the clean items."""
+    names = [["alpha"]] * 4 + [["beta"]] * 4 + [["alpha"]] * 4 + [["beta"]] * 4
+    attributes = build_attribute_matrix(names, min_count=1)
+    codes = [0] * 8 + [1] * 8
+    tok = _codes_tokenizer(codes)
+    alpha = attributes.names.index("alpha")
+    cache = MaskCache(tok, attributes)
+
+    assert (0,) in cache.prefix_mask(alpha, 1, 0.0)
+    trie = cache.allowed_trie(alpha)
+    assert 0 in trie[0][()]
+    assert 1 in trie[0][()]
+
+    for item, sid in enumerate(tok.sid_table):
+        sid_t = tuple(int(v) for v in sid)
+        if attributes.has(item, alpha):
+            continue
+        assert sid_t[0] in trie[0][()]
+        assert sid_t[1] in trie[1][sid_t[:1]]
+
+
+def test_allowed_trie_and_pmaj_decode(corpus, tokenizer):
+    vocab = build_vocab(tokenizer)
+    model = TigerGR(
+        vocab_size=vocab.vocab_size,
+        sid_length=tokenizer.sid_length,
+        level_sizes=tokenizer.level_sizes,
+        d_model=32,
+        num_layers=1,
+        num_heads=2,
+        d_ff=64,
+    )
+    ds = GRDataset(corpus, tokenizer, vocab, split="test", max_history_len=5)
+    input_ids = torch.tensor([ds[0]["input_ids"]])
+    attn = torch.ones_like(input_ids)
+    cache = MaskCache(tokenizer, corpus.attributes)
+    specs = select_decoders(["pmaj_l1", "allowed_trie", "prefix_mask_l1"])
+    for spec in specs:
+        result = decode(
+            model, tokenizer, input_ids, attn, spec, attr=0,
+            mask_cache=cache, beam_size=8, topk=5,
+        )
+        if spec.name in ("allowed_trie", "prefix_mask_l1"):
+            for item in result.items:
+                assert not corpus.attributes.has(item, 0)

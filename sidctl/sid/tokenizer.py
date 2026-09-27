@@ -323,6 +323,26 @@ class SIDTokenizer:
             return []
         return self.prefix_trie[level].get(prefix, [])
 
+    def trie_for_items(self, item_indices) -> list[dict[tuple, list[int]]]:
+        """SID trie restricted to ``item_indices``.
+
+        A prefix stays open if *any* kept item sits under it. That is the
+        allowed-item control surface: mixed L1 buckets are not closed just
+        because they also contain forbidden items.
+        """
+        keep = {int(i) for i in item_indices}
+        children: list[dict[tuple, set[int]]] = [
+            defaultdict(set) for _ in range(self.sid_length)
+        ]
+        for item_idx, sid in self._iter_item_sids():
+            if item_idx not in keep:
+                continue
+            for level in range(self.sid_length):
+                children[level][sid[:level]].add(sid[level])
+        return [
+            {p: sorted(tok) for p, tok in level.items()} for level in children
+        ]
+
     def prefix_items(self, level: int) -> dict[tuple, np.ndarray]:
         """
         Map each length-``level`` prefix to the item indices beneath it.
