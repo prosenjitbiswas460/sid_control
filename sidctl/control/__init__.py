@@ -1,6 +1,7 @@
 from sidctl.control.decoders import (
     DEFAULT_DECODERS,
     POLICY_DECODER_NAMES,
+    PRUNE_DECODER_NAMES,
     SEARCH_DECODER_NAMES,
     DecodeResult,
     DecoderSpec,
@@ -24,6 +25,7 @@ from sidctl.control.protocol import (
 __all__ = [
     "DEFAULT_DECODERS",
     "POLICY_DECODER_NAMES",
+    "PRUNE_DECODER_NAMES",
     "SEARCH_DECODER_NAMES",
     "DecodeResult",
     "DecoderSpec",

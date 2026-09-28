@@ -343,6 +343,25 @@ class SIDTokenizer:
             {p: sorted(tok) for p, tok in level.items()} for level in children
         ]
 
+    def trie_for_rows(self, row_indices) -> list[dict[tuple, list[int]]]:
+        """SID trie over selected rows of :meth:`_iter_item_sids`.
+
+        Row granularity, unlike :meth:`trie_for_items`, so a tiled item can
+        keep one control path and lose another.
+        """
+        keep = set(int(r) for r in row_indices)
+        children: list[dict[tuple, set[int]]] = [
+            defaultdict(set) for _ in range(self.sid_length)
+        ]
+        for row, (_, sid) in enumerate(self._iter_item_sids()):
+            if row not in keep:
+                continue
+            for level in range(self.sid_length):
+                children[level][sid[:level]].add(sid[level])
+        return [
+            {p: sorted(tok) for p, tok in level.items()} for level in children
+        ]
+
     def prefix_items(self, level: int) -> dict[tuple, np.ndarray]:
         """
         Map each length-``level`` prefix to the item indices beneath it.

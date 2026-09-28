@@ -33,6 +33,7 @@ class DecoderSpec:
     oracle: bool = False  # score every catalog SID exactly instead of searching
     purity_weight: float = 0.0  # PACD: prune by log p + w * log allowed share
     lookahead: int = 0  # prune by log p + log allowed child mass (M * beam cands)
+    prune_theta: float = 0.0  # drop subtrees whose allowed share is <= theta
     description: str = ""
 
 
@@ -153,7 +154,22 @@ def _search_decoders() -> list[DecoderSpec]:
 
 SEARCH_DECODERS = _search_decoders()
 
-DECODER_BY_NAME = {s.name: s for s in DEFAULT_DECODERS + SEARCH_DECODERS}
+PRUNE_THETAS = (0.0, 0.001, 0.01, 0.05, 0.1, 0.2)
+
+# Does the catalog-side risk/compute curve hold up as ranking quality?
+PRUNE_DECODERS: list[DecoderSpec] = [
+    DecoderSpec(
+        name="prune_t0" if theta == 0 else f"prune_t{theta:g}",
+        allowed_trie=True,
+        prune_theta=theta,
+        description=f"constraint-aware pruning, allowed share <= {theta:g} dropped",
+    )
+    for theta in PRUNE_THETAS
+]
+
+DECODER_BY_NAME = {
+    s.name: s for s in DEFAULT_DECODERS + SEARCH_DECODERS + PRUNE_DECODERS
+}
 
 # Locked comparison: P0 vs Pmaj vs post-filter vs allowed-item trie.
 POLICY_DECODER_NAMES = (
@@ -166,6 +182,11 @@ POLICY_DECODER_NAMES = (
 
 # Search-error study: oracle ceiling, beam sweep, PACD and lookahead pruning.
 SEARCH_DECODER_NAMES = ("unconstrained",) + tuple(s.name for s in SEARCH_DECODERS)
+
+# Pruning study: ranking cost of coarse subtree elimination.
+PRUNE_DECODER_NAMES = ("unconstrained", "oracle_allowed", "post_filter") + tuple(
+    s.name for s in PRUNE_DECODERS
+)
 
 
 def select_decoders(names: list[str] | None = None) -> list[DecoderSpec]:
@@ -201,7 +222,11 @@ def decode(
     if spec.allowed_trie:
         if spec.purity_weight:
             prefix_bonus = mask_cache.allowed_log_share(attr)
-        trie = mask_cache.allowed_trie(attr)
+        trie = (
+            mask_cache.pruned_trie(attr, spec.prune_theta)
+            if spec.prune_theta
+            else mask_cache.allowed_trie(attr)
+        )
     elif spec.mask_level is not None:
         if spec.majority:
             banned_prefixes = mask_cache.majority_mask(attr, spec.mask_level)

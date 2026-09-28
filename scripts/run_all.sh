@@ -19,6 +19,7 @@ echo
 echo "=== [2/5] Part A: prefix purity + realisability (no GPU) ==="
 $PY scripts/analyze_prefix_control.py --config "$CONFIG"
 $PY scripts/eval_control_policies.py --config "$CONFIG" --levels 1
+$PY scripts/analyze_pruning.py --config "$CONFIG"
 
 if [[ "$PART_A_ONLY" == "1" ]]; then
   $PY scripts/make_figures.py --config "$CONFIG"

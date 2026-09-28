@@ -151,6 +151,8 @@ class MaskCache:
         self._majority: dict[tuple[int, int], set[tuple]] = {}
         self._items: dict[int, set[int]] = {}
         self._allowed_trie: dict[int, list[dict[tuple, list[int]]]] = {}
+        self._pruned_trie: dict[tuple, list[dict[tuple, list[int]]]] = {}
+        self._prune_stats: dict[tuple, dict] = {}
         self._totals: list[Counter] | None = None
         self._log_share: dict[int, list[dict[tuple, float]]] = {}
         self._oracle: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
@@ -194,6 +196,27 @@ class MaskCache:
             ]
             self._allowed_trie[attr] = self.tokenizer.trie_for_items(keep)
         return self._allowed_trie[attr]
+
+    def pruned_trie(self, attr: int, theta: float) -> list[dict[tuple, list[int]]]:
+        """Allowed trie after pruning subtrees whose allowed share is <= ``theta``.
+
+        ``theta = 0`` is exact and returns the allowed trie. Larger values trade
+        feasible items for a coarser, cheaper constraint resolution; forbidden
+        items stay unreachable either way.
+        """
+        if theta <= 0.0:
+            return self.allowed_trie(attr)
+        key = (attr, float(theta))
+        if key not in self._pruned_trie:
+            from sidctl.analysis.pruning import resolve_constraint
+
+            res = resolve_constraint(self.tokenizer, self.attributes, attr, theta)
+            self._pruned_trie[key] = self.tokenizer.trie_for_rows(res.surviving_rows)
+            self._prune_stats[key] = res.summary()
+        return self._pruned_trie[key]
+
+    def prune_stats(self, attr: int, theta: float) -> dict:
+        return self._prune_stats.get((attr, float(theta)), {})
 
     def _prefix_totals(self) -> list[Counter]:
         if self._totals is None:

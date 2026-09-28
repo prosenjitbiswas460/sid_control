@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sidctl.control import (  # noqa: E402
     DEFAULT_DECODERS,
     POLICY_DECODER_NAMES,
+    PRUNE_DECODER_NAMES,
     SEARCH_DECODER_NAMES,
     build_control_instances,
     instance_stats,
@@ -41,7 +42,8 @@ def main() -> None:
         default=None,
         help="comma-separated decoder names. "
         f"'policy' expands to {','.join(POLICY_DECODER_NAMES)}; "
-        "'search' expands to the oracle / beam-sweep / PACD / lookahead study",
+        "'search' expands to the oracle / beam-sweep / PACD / lookahead study; "
+        "'prune' expands to the constraint-aware pruning theta sweep",
     )
     ap.add_argument(
         "--tag",
@@ -89,6 +91,9 @@ def main() -> None:
     elif args.decoders.strip() == "search":
         specs = select_decoders(list(SEARCH_DECODER_NAMES))
         args.tag = args.tag or "search"
+    elif args.decoders.strip() == "prune":
+        specs = select_decoders(list(PRUNE_DECODER_NAMES))
+        args.tag = args.tag or "prune"
     else:
         specs = select_decoders(
             [n.strip() for n in args.decoders.split(",") if n.strip()]

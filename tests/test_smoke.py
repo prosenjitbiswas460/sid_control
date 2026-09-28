@@ -18,6 +18,7 @@ from sidctl.analysis import (
     evaluate_attr_policies,
     prefix_purity,
     realizability_frontier,
+    resolve_constraint,
 )
 from sidctl.attributes import AttributeTable
 from sidctl.control import (
@@ -570,3 +571,69 @@ def test_search_decoders_are_exact_and_report_overlap(corpus, tokenizer):
         assert m[name]["violation_rate"] == pytest.approx(0.0)
         assert 0.0 <= m[name]["oracle_overlap"] <= 1.0
         assert m[name]["latency_ms"] >= 0.0
+
+
+def test_exact_pruning_is_safe_and_settles_pure_prefixes():
+    """A is 100% forbidden, B is mixed. Exact pruning kills A, keeps B's allowed items."""
+    names = [["alpha"]] * 8 + [["alpha"]] * 2 + [["beta"]] * 6
+    codes = [0] * 8 + [1] * 8
+    attributes = build_attribute_matrix(names, min_count=1)
+    tok = _codes_tokenizer(codes)
+    alpha = attributes.names.index("alpha")
+    res = resolve_constraint(tok, attributes, alpha, theta=0.0)
+    assert res.feasible_recall == pytest.approx(1.0)
+    assert res.lost_items == 0
+    assert res.settled_by("prune", 1) == pytest.approx(8 / 16)
+    assert res.work_saved == pytest.approx(8 / 16)
+    # mixed prefix 1 is not pruned at L1
+    d1 = next(d for d in res.by_depth if d["depth"] == 1)
+    assert d1["descend"] == 1
+    assert d1["prune"] == 1
+
+
+def test_aggressive_pruning_trades_recall_for_work():
+    names = [["alpha"]] * 8 + [["alpha"]] * 2 + [["beta"]] * 6
+    codes = [0] * 8 + [1] * 8
+    attributes = build_attribute_matrix(names, min_count=1)
+    tok = _codes_tokenizer(codes)
+    alpha = attributes.names.index("alpha")
+    exact = resolve_constraint(tok, attributes, alpha, 0.0)
+    coarse = resolve_constraint(tok, attributes, alpha, 0.3)
+    # prefix 1 is 6/8 allowed, 2/8 forbidden → share 0.75, not pruned at 0.3
+    assert coarse.feasible_recall == pytest.approx(1.0)
+    # prefix 1 share of allowed is 6/8 = 0.75; prune when allowed share <= 0.8
+    killed = resolve_constraint(tok, attributes, alpha, 0.8)
+    assert killed.feasible_recall == pytest.approx(0.0)
+    assert killed.work_saved > exact.work_saved
+    assert killed.lost_items == 6
+
+
+def test_category_tokenizer_settles_the_catalog_at_depth_1():
+    names = [["alpha"]] * 12 + [["beta"]] * 12 + [["gamma"]] * 12
+    titles = [f"item {i} {names[i][0]}" for i in range(len(names))]
+    attributes = build_attribute_matrix(names, min_count=1)
+    tok = build_tokenizer("category", titles, attributes=attributes, **_tok_kwargs())
+    alpha = attributes.names.index("alpha")
+    res = resolve_constraint(tok, attributes, alpha, 0.0)
+    assert res.feasible_recall == pytest.approx(1.0)
+    assert res.settled_at_depth_1 == pytest.approx(1.0)
+    assert res.work_saved == pytest.approx(1.0)
+
+
+def test_pruned_trie_at_theta_zero_matches_allowed_trie(corpus, tokenizer):
+    cache = MaskCache(tokenizer, corpus.attributes)
+    assert cache.pruned_trie(0, 0.0) == cache.allowed_trie(0)
+
+
+def test_prune_decoder_stays_exact_at_theta_zero(corpus, tokenizer):
+    model, vocab = _tiny_model(tokenizer)
+    ds = GRDataset(corpus, tokenizer, vocab, split="test", max_history_len=5)
+    input_ids = torch.tensor([ds[0]["input_ids"]])
+    attn = torch.ones_like(input_ids)
+    cache = MaskCache(tokenizer, corpus.attributes)
+    trie, prune = select_decoders(["allowed_trie", "prune_t0"])
+    a = decode(model, tokenizer, input_ids, attn, trie, 0, cache, beam_size=8, topk=5)
+    b = decode(model, tokenizer, input_ids, attn, prune, 0, cache, beam_size=8, topk=5)
+    assert a.items == b.items
+    for item in a.items:
+        assert not corpus.attributes.has(item, 0)
