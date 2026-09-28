@@ -9,7 +9,7 @@ is about to throw away.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 
@@ -29,6 +29,10 @@ class DecoderSpec:
     majority: bool = False  # Pmaj: ban prefixes whose majority label is attr
     allowed_trie: bool = False  # search only SIDs of allowed items
     beam_multiplier: float = 1.0
+    beam: int | None = None  # fixed beam width, overrides the run's beam size
+    oracle: bool = False  # score every catalog SID exactly instead of searching
+    purity_weight: float = 0.0  # PACD: prune by log p + w * log allowed share
+    lookahead: int = 0  # prune by log p + log allowed child mass (M * beam cands)
     description: str = ""
 
 
@@ -38,6 +42,7 @@ class DecodeResult:
     n_returned: int
     beam_size: int
     n_candidates: int  # valid SIDs the beam produced, before item filtering
+    scores: list[float] = field(default_factory=list)  # model log-prob per item
 
 
 DEFAULT_DECODERS: list[DecoderSpec] = [
@@ -93,7 +98,62 @@ DEFAULT_DECODERS: list[DecoderSpec] = [
 ]
 
 
-DECODER_BY_NAME = {s.name: s for s in DEFAULT_DECODERS}
+SEARCH_BEAMS = (10, 20, 50, 100)
+
+
+def _search_decoders() -> list[DecoderSpec]:
+    specs = [
+        DecoderSpec(
+            name="oracle_unconstrained",
+            oracle=True,
+            description="exact top-k over every catalog item (no search error)",
+        ),
+        DecoderSpec(
+            name="oracle_allowed",
+            oracle=True,
+            allowed_trie=True,
+            description="exact top-k over allowed items: ceiling for any exact decoder",
+        ),
+    ]
+    for b in SEARCH_BEAMS:
+        specs += [
+            DecoderSpec(
+                name=f"allowed_trie_b{b}",
+                allowed_trie=True,
+                beam=b,
+                description=f"allowed-item trie, beam {b}",
+            ),
+            DecoderSpec(
+                name=f"pacd_b{b}",
+                allowed_trie=True,
+                beam=b,
+                purity_weight=1.0,
+                description=f"allowed trie, prune by log p + log allowed share, beam {b}",
+            ),
+            DecoderSpec(
+                name=f"lookahead_b{b}",
+                allowed_trie=True,
+                beam=b,
+                lookahead=2,
+                description=f"allowed trie, prune by log p + log allowed child mass, beam {b}",
+            ),
+        ]
+    for w in (0.5, 2.0):
+        specs.append(
+            DecoderSpec(
+                name=f"pacd_w{w:g}_b10",
+                allowed_trie=True,
+                beam=10,
+                purity_weight=w,
+                description=f"PACD weight {w:g}, beam 10",
+            )
+        )
+    return specs
+
+
+SEARCH_DECODERS = _search_decoders()
+
+DECODER_BY_NAME = {s.name: s for s in DEFAULT_DECODERS + SEARCH_DECODERS}
 
 # Locked comparison: P0 vs Pmaj vs post-filter vs allowed-item trie.
 POLICY_DECODER_NAMES = (
@@ -103,6 +163,9 @@ POLICY_DECODER_NAMES = (
     "post_filter",
     "allowed_trie",
 )
+
+# Search-error study: oracle ceiling, beam sweep, PACD and lookahead pruning.
+SEARCH_DECODER_NAMES = ("unconstrained",) + tuple(s.name for s in SEARCH_DECODERS)
 
 
 def select_decoders(names: list[str] | None = None) -> list[DecoderSpec]:
@@ -127,11 +190,17 @@ def decode(
     topk: int = 10,
 ) -> DecodeResult:
     """Run one decoder under one constraint and return ranked item indices."""
-    beam = max(int(round(beam_size * spec.beam_multiplier)), topk)
+    if spec.oracle:
+        return _oracle_decode(model, input_ids, attention_mask, spec, attr, mask_cache, topk)
+
+    beam = max(spec.beam or int(round(beam_size * spec.beam_multiplier)), topk)
 
     banned_prefixes = None
+    prefix_bonus = None
     trie = tokenizer.prefix_trie
     if spec.allowed_trie:
+        if spec.purity_weight:
+            prefix_bonus = mask_cache.allowed_log_share(attr)
         trie = mask_cache.allowed_trie(attr)
     elif spec.mask_level is not None:
         if spec.majority:
@@ -150,12 +219,16 @@ def decode(
         beam_size=beam,
         banned_prefixes=banned_prefixes,
         max_return=beam,
+        prefix_bonus=prefix_bonus,
+        bonus_weight=spec.purity_weight,
+        lookahead=spec.lookahead,
     )
 
     drop = mask_cache.item_mask(attr) if spec.item_filter else set()
     items: list[int] = []
+    scores: list[float] = []
     seen: set[int] = set()
-    for sid, _ in scored:
+    for sid, score in scored:
         item = tokenizer.sid_to_item.get(sid)
         if item is None or item in seen:
             continue
@@ -174,6 +247,7 @@ def decode(
         ):
             continue
         items.append(item)
+        scores.append(score)
         if len(items) >= topk:
             break
 
@@ -182,4 +256,39 @@ def decode(
         n_returned=len(items),
         beam_size=beam,
         n_candidates=len(scored),
+        scores=scores,
+    )
+
+
+def _oracle_decode(
+    model: TigerGR,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    spec: DecoderSpec,
+    attr: int,
+    mask_cache: MaskCache,
+    topk: int,
+) -> DecodeResult:
+    """Exact ranking; a tiled item scores as its best tile."""
+    device = input_ids.device
+    key = tuple(input_ids.flatten().tolist())
+    if mask_cache._oracle_user is None or mask_cache._oracle_user[0] != key:
+        item_idx, sid_tokens = mask_cache.oracle_table(model, device)
+        sid_scores = model.score_sids(input_ids, attention_mask, sid_tokens)
+        n_items = mask_cache.attributes.num_items
+        per_item = torch.full((n_items,), float("-inf"), device=device)
+        per_item = per_item.scatter_reduce(0, item_idx, sid_scores, reduce="amax")
+        mask_cache._oracle_user = (key, per_item)
+    per_item = mask_cache._oracle_user[1]
+    if spec.allowed_trie:
+        per_item = per_item.clone()
+        per_item[mask_cache.forbidden_index(attr, device)] = float("-inf")
+    k = min(topk, int(torch.isfinite(per_item).sum()))
+    top = per_item.topk(k)
+    return DecodeResult(
+        items=top.indices.tolist(),
+        n_returned=k,
+        beam_size=0,
+        n_candidates=int(per_item.numel()),
+        scores=top.values.tolist(),
     )

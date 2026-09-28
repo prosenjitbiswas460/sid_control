@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import math
+from collections import Counter
+
 import numpy as np
+import torch
 
 from sidctl.attributes import AttributeTable
 from sidctl.sid.tokenizer import SIDTokenizer
@@ -147,6 +151,11 @@ class MaskCache:
         self._majority: dict[tuple[int, int], set[tuple]] = {}
         self._items: dict[int, set[int]] = {}
         self._allowed_trie: dict[int, list[dict[tuple, list[int]]]] = {}
+        self._totals: list[Counter] | None = None
+        self._log_share: dict[int, list[dict[tuple, float]]] = {}
+        self._oracle: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
+        self._forbidden: dict[tuple, torch.Tensor] = {}
+        self._oracle_user: tuple | None = None
 
     def prefix_mask(self, attr: int, level: int, tau: float = 0.0) -> set[tuple]:
         key = (attr, level, tau)
@@ -185,3 +194,58 @@ class MaskCache:
             ]
             self._allowed_trie[attr] = self.tokenizer.trie_for_items(keep)
         return self._allowed_trie[attr]
+
+    def _prefix_totals(self) -> list[Counter]:
+        if self._totals is None:
+            L = self.tokenizer.sid_length
+            self._totals = [Counter() for _ in range(L)]
+            for _, sid in self.tokenizer._iter_item_sids():
+                for d in range(L):
+                    self._totals[d][sid[: d + 1]] += 1
+        return self._totals
+
+    def allowed_log_share(self, attr: int) -> list[dict[tuple, float]]:
+        """``[level][prefix] -> log(allowed SIDs / all SIDs)`` under the prefix.
+
+        ``level`` indexes prefixes of length ``level + 1``. Only prefixes with
+        at least one allowed SID appear, i.e. exactly the allowed-trie nodes.
+        This is the PACD pruning bonus: under a uniform spread of the model's
+        mass over a subtree, it estimates log P(allowed | prefix).
+        """
+        if attr not in self._log_share:
+            totals = self._prefix_totals()
+            drop = self.item_mask(attr)
+            L = self.tokenizer.sid_length
+            allowed = [Counter() for _ in range(L)]
+            for item, sid in self.tokenizer._iter_item_sids():
+                if item in drop:
+                    continue
+                for d in range(L):
+                    allowed[d][sid[: d + 1]] += 1
+            self._log_share[attr] = [
+                {p: math.log(n / totals[d][p]) for p, n in allowed[d].items()}
+                for d in range(L)
+            ]
+        return self._log_share[attr]
+
+    def oracle_table(self, model, device) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(item_index[N], sid_tokens[N, L])`` over every catalog SID."""
+        key = str(device)
+        if key not in self._oracle:
+            items, rows = [], []
+            for item, sid in self.tokenizer._iter_item_sids():
+                items.append(item)
+                rows.append(model.sid_to_token_ids(sid))
+            self._oracle[key] = (
+                torch.tensor(items, dtype=torch.long, device=device),
+                torch.tensor(rows, dtype=torch.long, device=device),
+            )
+        return self._oracle[key]
+
+    def forbidden_index(self, attr: int, device) -> torch.Tensor:
+        key = (attr, str(device))
+        if key not in self._forbidden:
+            self._forbidden[key] = torch.tensor(
+                sorted(self.item_mask(attr)), dtype=torch.long, device=device
+            )
+        return self._forbidden[key]

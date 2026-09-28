@@ -505,3 +505,68 @@ def test_allowed_trie_and_pmaj_decode(corpus, tokenizer):
         if spec.name in ("allowed_trie", "prefix_mask_l1"):
             for item in result.items:
                 assert not corpus.attributes.has(item, 0)
+
+
+def _tiny_model(tokenizer):
+    vocab = build_vocab(tokenizer)
+    model = TigerGR(
+        vocab_size=vocab.vocab_size,
+        sid_length=tokenizer.sid_length,
+        level_sizes=tokenizer.level_sizes,
+        d_model=32,
+        num_layers=1,
+        num_heads=2,
+        d_ff=64,
+    )
+    return model.eval(), vocab
+
+
+def test_oracle_matches_exhaustive_allowed_beam(corpus, tokenizer):
+    model, vocab = _tiny_model(tokenizer)
+    ds = GRDataset(corpus, tokenizer, vocab, split="test", max_history_len=5)
+    input_ids = torch.tensor([ds[0]["input_ids"]])
+    attn = torch.ones_like(input_ids)
+    cache = MaskCache(tokenizer, corpus.attributes)
+    oracle, beam = select_decoders(["oracle_allowed", "allowed_trie"])
+    full = len(tokenizer.sid_to_item)
+    exact = decode(model, tokenizer, input_ids, attn, oracle, 0, cache, topk=5)
+    wide = decode(model, tokenizer, input_ids, attn, beam, 0, cache,
+                  beam_size=full, topk=5)
+    assert exact.items == wide.items
+    assert exact.scores == pytest.approx(wide.scores, abs=1e-4)
+    assert all(not corpus.attributes.has(i, 0) for i in exact.items)
+
+
+def test_allowed_log_share_is_allowed_trie_with_log_fractions(corpus, tokenizer):
+    cache = MaskCache(tokenizer, corpus.attributes)
+    share = cache.allowed_log_share(0)
+    trie = cache.allowed_trie(0)
+    for level in range(tokenizer.sid_length):
+        nodes = {p + (c,) for p, codes in trie[level].items() for c in codes}
+        assert set(share[level]) == nodes
+        assert all(v <= 1e-12 for v in share[level].values())
+    # leaves are single allowed SIDs, so their share is exactly 1
+    assert all(v == pytest.approx(0.0) for v in share[-1].values())
+
+
+def test_search_decoders_are_exact_and_report_overlap(corpus, tokenizer):
+    model, vocab = _tiny_model(tokenizer)
+    instances = build_control_instances(
+        corpus, allowed_attrs=list(range(corpus.attributes.num_attrs)),
+        min_attr_count=1, min_history=1, max_users=4,
+    )
+    specs = select_decoders([
+        "unconstrained", "oracle_allowed", "allowed_trie_b10",
+        "pacd_b10", "lookahead_b10", "pacd_w2_b10",
+    ])
+    res = evaluate_control(
+        model, tokenizer, vocab, corpus, instances, specs,
+        beam_size=8, topk=3, max_history_len=5, device="cpu",
+    )
+    m = res["per_decoder"]
+    assert m["oracle_allowed"]["oracle_overlap"] == pytest.approx(1.0)
+    assert m["oracle_allowed"]["missed_best"] == pytest.approx(0.0)
+    for name in ("allowed_trie_b10", "pacd_b10", "lookahead_b10", "pacd_w2_b10"):
+        assert m[name]["violation_rate"] == pytest.approx(0.0)
+        assert 0.0 <= m[name]["oracle_overlap"] <= 1.0
+        assert m[name]["latency_ms"] >= 0.0

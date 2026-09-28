@@ -8,6 +8,7 @@ therefore a direct measure of collateral damage.
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 
 import numpy as np
@@ -53,7 +54,12 @@ def evaluate_control(
             continue
         input_ids, attn = to_tensors(tokens, device=device_t)
 
+        inst_rows: list[tuple[dict, list[int]]] = []
+        oracle_items: list[int] | None = None
         for spec in specs:
+            if device_t.type == "cuda":
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
             res = decode(
                 model,
                 tokenizer,
@@ -65,11 +71,16 @@ def evaluate_control(
                 beam_size=beam_size,
                 topk=topk,
             )
+            if device_t.type == "cuda":
+                torch.cuda.synchronize()
+            latency_ms = (time.perf_counter() - t0) * 1000.0
+            if spec.name == "oracle_allowed":
+                oracle_items = res.items[:topk]
             violations = sum(
                 1 for it in res.items[:topk] if attr_matrix[it, inst.attr]
             )
-            rows.append(
-                {
+            inst_rows.append(
+                ({
                     "user_id": inst.user_id,
                     "attr_name": inst.attr_name,
                     "reason": inst.reason,
@@ -81,8 +92,17 @@ def evaluate_control(
                     "short_list": float(res.n_returned < topk),
                     "fill_rate": res.n_returned / topk,
                     "beam_size": res.beam_size,
-                }
+                    "latency_ms": latency_ms,
+                }, res.items[:topk])
             )
+
+        # Search error against the exact allowed ranking, when it was computed.
+        for row, items in inst_rows:
+            if oracle_items:
+                ref = set(oracle_items)
+                row["oracle_overlap"] = len(ref.intersection(items)) / len(ref)
+                row["missed_best"] = float(oracle_items[0] not in items)
+            rows.append(row)
 
     return {
         "topk": topk,
@@ -95,7 +115,7 @@ def evaluate_control(
 
 
 def _summarize(subset: list[dict]) -> dict:
-    return {
+    out = {
         "n": len(subset),
         "ndcg": mean([r["ndcg"] for r in subset]),
         "hit_rate": mean([r["hit"] for r in subset]),
@@ -103,7 +123,13 @@ def _summarize(subset: list[dict]) -> dict:
         "any_violation": mean([r["any_violation"] for r in subset]),
         "short_list_rate": mean([r["short_list"] for r in subset]),
         "fill_rate": mean([r["fill_rate"] for r in subset]),
+        "latency_ms": mean([r["latency_ms"] for r in subset if "latency_ms" in r]),
     }
+    for key in ("oracle_overlap", "missed_best"):
+        vals = [r[key] for r in subset if key in r]
+        if vals:
+            out[key] = mean(vals)
+    return out
 
 
 def _aggregate(rows: list[dict], specs: list[DecoderSpec], topk: int) -> dict:

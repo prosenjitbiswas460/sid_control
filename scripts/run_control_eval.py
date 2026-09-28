@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from sidctl.control import (  # noqa: E402
     DEFAULT_DECODERS,
     POLICY_DECODER_NAMES,
+    SEARCH_DECODER_NAMES,
     build_control_instances,
     instance_stats,
     select_decoders,
@@ -39,7 +40,13 @@ def main() -> None:
         "--decoders",
         default=None,
         help="comma-separated decoder names. "
-        f"'policy' expands to {','.join(POLICY_DECODER_NAMES)}",
+        f"'policy' expands to {','.join(POLICY_DECODER_NAMES)}; "
+        "'search' expands to the oracle / beam-sweep / PACD / lookahead study",
+    )
+    ap.add_argument(
+        "--tag",
+        default=None,
+        help="output suffix: control_eval_<tag>.json (default: search preset -> 'search')",
     )
     args = ap.parse_args()
 
@@ -79,6 +86,9 @@ def main() -> None:
         specs = list(DEFAULT_DECODERS)
     elif args.decoders.strip() == "policy":
         specs = select_decoders(list(POLICY_DECODER_NAMES))
+    elif args.decoders.strip() == "search":
+        specs = select_decoders(list(SEARCH_DECODER_NAMES))
+        args.tag = args.tag or "search"
     else:
         specs = select_decoders(
             [n.strip() for n in args.decoders.split(",") if n.strip()]
@@ -103,23 +113,28 @@ def main() -> None:
     _print(results)
     out = Path(args.results) / dataset / args.tokenizer
     rows = results.pop("rows")
-    save_json(results, out / "control_eval.json")
-    save_json(rows, out / "control_eval_rows.json")
-    print(f"\nwrote {out / 'control_eval.json'}")
+    stem = f"control_eval_{args.tag}" if args.tag else "control_eval"
+    save_json(results, out / f"{stem}.json")
+    save_json(rows, out / f"{stem}_rows.json")
+    print(f"\nwrote {out / (stem + '.json')}")
 
 
 def _print(results: dict) -> None:
     k = results["topk"]
     print(
         f"\n{'decoder':<24s} {'NDCG@'+str(k):>9s} {'retain':>7s} "
-        f"{'viol@'+str(k):>8s} {'anyviol':>8s} {'short':>7s} {'fill':>6s}"
+        f"{'viol@'+str(k):>8s} {'anyviol':>8s} {'short':>7s} {'fill':>6s} "
+        f"{'overlap':>8s} {'missed':>7s} {'ms':>8s}"
     )
-    print("-" * 72)
+    print("-" * 104)
     for name, m in results["per_decoder"].items():
         print(
             f"{name:<24s} {m['ndcg']:>9.4f} {m['ndcg_retention']:>7.3f} "
             f"{m['violation_rate']:>8.4f} {m['any_violation']:>8.3f} "
-            f"{m['short_list_rate']:>7.3f} {m['fill_rate']:>6.3f}"
+            f"{m['short_list_rate']:>7.3f} {m['fill_rate']:>6.3f} "
+            f"{m.get('oracle_overlap', float('nan')):>8.3f} "
+            f"{m.get('missed_best', float('nan')):>7.3f} "
+            f"{m['latency_ms']:>8.1f}"
         )
     print(
         "\nEvery constraint is compatible with the held-out target, so an ideal\n"
