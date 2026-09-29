@@ -125,3 +125,69 @@ def fig_heldout(runs: dict[str, dict], path: Path, dataset: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150)
     plt.close(fig)
+
+
+def _fmt(x: float) -> str:
+    return f"{x:.3f}" if np.isfinite(x) else "nan"
+
+
+def heldout_ranking_table(runs: dict[str, dict]) -> list[str]:
+    """NDCG and violation for unconstrained beam vs the exact allowed trie."""
+    lines = [
+        "| tokenizer | family | unc NDCG | trie NDCG | retain | unc viol | trie viol |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for tag, pair in runs.items():
+        for key, label in (("in_family", "in"), ("held_out", "held")):
+            block = pair[key]["per_decoder"]
+            unc = block["unconstrained"]
+            trie = block["allowed_trie"]
+            lines.append(
+                f"| {tag} | {label} | {_fmt(unc['ndcg'])} | {_fmt(trie['ndcg'])} | "
+                f"{_fmt(trie['ndcg_retention'])} | {_fmt(unc['violation_rate'])} | "
+                f"{_fmt(trie['violation_rate'])} |"
+            )
+    return lines + [""]
+
+
+def fig_heldout_ranking(
+    runs: dict[str, dict],
+    path: Path,
+    dataset: str = "",
+    in_name: str = "in-family",
+    held_name: str = "held-out",
+) -> None:
+    """Allowed-trie NDCG retention versus unconstrained, same users."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    tags = list(runs)
+
+    def _retain(tag: str, key: str) -> float:
+        val = runs[tag][key]["per_decoder"]["allowed_trie"]["ndcg_retention"]
+        return float(val) if np.isfinite(val) else 0.0
+
+    x = np.arange(len(tags))
+    w = 0.36
+    inn = [_retain(t, "in_family") for t in tags]
+    hld = [_retain(t, "held_out") for t in tags]
+    fig, ax = plt.subplots(figsize=(max(8, 1.5 * len(tags)), 4.2))
+    ax.bar(x - w / 2, inn, w, label=f"in-family ({in_name})")
+    ax.bar(x + w / 2, hld, w, label=f"held-out ({held_name})")
+    ax.axhline(1.0, color="0.4", lw=0.8, ls="--")
+    ax.set_xticks(x)
+    ax.set_xticklabels(tags, rotation=20, ha="right")
+    ymax = max([1.0, *inn, *hld])
+    ax.set_ylim(0, ymax * 1.15 if ymax > 0 else 1)
+    ax.set_ylabel("allowed-trie NDCG retention")
+    title = "same users, trie vs unconstrained"
+    if dataset:
+        title = f"{title}: {dataset}"
+    ax.set_title(title)
+    ax.legend()
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150)
+    plt.close(fig)

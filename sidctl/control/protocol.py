@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from sidctl.attributes import AttributeTable
 from sidctl.data.corpus import Corpus
 
 
@@ -58,6 +59,7 @@ def build_control_instances(
     max_users: int | None = None,
     split: str = "test",
     seed: int = 42,
+    attributes: AttributeTable | None = None,
 ) -> list[ControlInstance]:
     """
     Leave-last-positive-out instances paired with a compatible constraint.
@@ -69,11 +71,17 @@ def build_control_instances(
     attributes the user never touches are never selected, because they would
     make the control look free.
     """
-    matrix = corpus.attributes.matrix
+    table = attributes if attributes is not None else corpus.attributes
+    if table.num_items != corpus.num_items:
+        raise ValueError(
+            f"attribute table has {table.num_items} items, "
+            f"corpus has {corpus.num_items}"
+        )
+    matrix = table.matrix
     allowed = (
         allowed_attrs
         if allowed_attrs is not None
-        else corpus.attributes.controllable_attrs()
+        else table.controllable_attrs()
     )
     allowed_set = set(allowed)
     users = user_ids if user_ids is not None else sorted(corpus.user_events)
@@ -118,7 +126,7 @@ def build_control_instances(
                 history=history,
                 target=target,
                 attr=int(attr),
-                attr_name=corpus.attributes.names[attr],
+                attr_name=table.names[attr],
                 reason=reason,
             )
         )
@@ -146,3 +154,46 @@ def instance_stats(instances: list[ControlInstance]) -> dict:
             np.mean([i.num_history for i in instances]) if instances else 0.0
         ),
     }
+
+
+def pair_control_instances(
+    corpus: Corpus,
+    held: AttributeTable,
+    *,
+    min_attr_count: int = 3,
+    min_history: int = 3,
+    max_users: int | None = None,
+    split: str = "test",
+    seed: int = 42,
+) -> tuple[list[ControlInstance], list[ControlInstance]]:
+    """Same users, one target-compatible constraint per attribute family.
+
+    Eligibility is computed on each table separately, then the user sets are
+    intersected and subsampled together so the two columns share a user list.
+    """
+    kw = dict(
+        min_attr_count=min_attr_count,
+        min_history=min_history,
+        max_users=None,
+        split=split,
+        seed=seed,
+    )
+    inn = build_control_instances(
+        corpus,
+        allowed_attrs=corpus.attributes.controllable_attrs(),
+        **kw,
+    )
+    hld = build_control_instances(
+        corpus,
+        allowed_attrs=held.controllable_attrs(),
+        attributes=held,
+        **kw,
+    )
+    by_in = {inst.user_id: inst for inst in inn}
+    by_held = {inst.user_id: inst for inst in hld}
+    common = sorted(set(by_in) & set(by_held))
+    if max_users is not None and len(common) > max_users:
+        rng = np.random.default_rng(seed)
+        pick = sorted(rng.choice(len(common), size=max_users, replace=False).tolist())
+        common = [common[i] for i in pick]
+    return [by_in[uid] for uid in common], [by_held[uid] for uid in common]

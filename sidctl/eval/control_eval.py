@@ -15,6 +15,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from sidctl.attributes import AttributeTable
 from sidctl.control.decoders import DecoderSpec, decode
 from sidctl.control.masks import MaskCache
 from sidctl.control.protocol import ControlInstance
@@ -38,12 +39,24 @@ def evaluate_control(
     topk: int = 10,
     max_history_len: int = 20,
     device: str | None = None,
+    attributes: AttributeTable | None = None,
 ) -> dict:
+    """Score ``instances`` under ``attributes``.
+
+    Defaults to ``corpus.attributes``. Pass a held-out table to score the same
+    histories against a second label family without touching the SID tree.
+    """
     device_t = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
     model.to(device_t).eval()
 
-    mask_cache = MaskCache(tokenizer, corpus.attributes)
-    attr_matrix = corpus.attributes.matrix
+    table = attributes if attributes is not None else corpus.attributes
+    if table.num_items != corpus.num_items:
+        raise ValueError(
+            f"attribute table has {table.num_items} items, "
+            f"corpus has {corpus.num_items}"
+        )
+    mask_cache = MaskCache(tokenizer, table)
+    attr_matrix = table.matrix
 
     rows: list[dict] = []
     for inst in tqdm(instances, desc="control eval"):

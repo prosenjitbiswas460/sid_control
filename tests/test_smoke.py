@@ -29,7 +29,7 @@ from sidctl.control import (
     select_decoders,
 )
 from sidctl.control.masks import build_majority_mask, item_has_banned_tile, mask_effect
-from sidctl.control.protocol import build_control_instances
+from sidctl.control.protocol import build_control_instances, pair_control_instances
 from sidctl.data import GRDataset, build_vocab, collate_fn
 from sidctl.data.corpus import Corpus, build_attribute_matrix, split_users
 from sidctl.eval import evaluate_control
@@ -693,3 +693,78 @@ def test_prune_decoder_stays_exact_at_theta_zero(corpus, tokenizer):
     assert a.items == b.items
     for item in a.items:
         assert not corpus.attributes.has(item, 0)
+
+
+def test_control_instances_use_passed_attribute_table(corpus):
+    matrix = np.zeros((corpus.num_items, 1), dtype=bool)
+    matrix[::2, 0] = True
+    alt = AttributeTable(names=["decade"], matrix=matrix)
+    instances = build_control_instances(
+        corpus,
+        allowed_attrs=[0],
+        attributes=alt,
+        min_attr_count=1,
+        min_history=1,
+        max_users=8,
+    )
+    assert instances
+    for inst in instances:
+        assert inst.attr_name == "decade"
+        assert inst.attr == 0
+        assert not alt.has(inst.target, 0)
+
+
+def test_paired_users_match_a_single_draw_on_the_same_table(corpus):
+    inn, held = pair_control_instances(
+        corpus,
+        corpus.attributes,
+        min_attr_count=1,
+        min_history=1,
+        max_users=5,
+        seed=0,
+    )
+    single = build_control_instances(
+        corpus,
+        allowed_attrs=corpus.attributes.controllable_attrs(),
+        min_attr_count=1,
+        min_history=1,
+        max_users=5,
+        seed=0,
+    )
+    assert [i.user_id for i in inn] == [i.user_id for i in single]
+    assert [i.user_id for i in held] == [i.user_id for i in inn]
+
+
+def test_evaluate_control_scores_the_passed_attribute_table(corpus, tokenizer):
+    alt = AttributeTable(
+        names=list(corpus.attributes.names),
+        matrix=np.ones(corpus.attributes.matrix.shape, dtype=bool),
+    )
+    instances = build_control_instances(
+        corpus,
+        allowed_attrs=list(range(corpus.attributes.num_attrs)),
+        min_attr_count=1,
+        min_history=1,
+        max_users=3,
+    )
+    vocab = build_vocab(tokenizer)
+    model = TigerGR(
+        vocab_size=vocab.vocab_size,
+        sid_length=tokenizer.sid_length,
+        level_sizes=tokenizer.level_sizes,
+        d_model=32,
+        num_layers=1,
+        num_heads=2,
+        d_ff=64,
+    )
+    specs = select_decoders(["unconstrained", "allowed_trie"])
+    res = evaluate_control(
+        model, tokenizer, vocab, corpus, instances, specs,
+        beam_size=4, topk=3, max_history_len=5, device="cpu",
+        attributes=alt,
+    )
+    unc = res["per_decoder"]["unconstrained"]
+    trie = res["per_decoder"]["allowed_trie"]
+    assert unc["violation_rate"] == pytest.approx(unc["fill_rate"])
+    assert trie["fill_rate"] == pytest.approx(0.0)
+    assert trie["violation_rate"] == pytest.approx(0.0)
