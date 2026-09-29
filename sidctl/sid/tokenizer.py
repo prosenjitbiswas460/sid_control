@@ -337,6 +337,8 @@ class SIDTokenizer:
 
     @property
     def is_tiled(self) -> bool:
+        if getattr(self, "_ignore_tile_channels", False):
+            return False
         return self.kind == "tiled" and self.tile_sids is not None
 
     @property

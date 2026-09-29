@@ -326,6 +326,24 @@ def test_tiled_removes_multilabel_floor():
     assert tiled_leak == pytest.approx(0.0)
 
 
+def test_decade_label_from_title():
+    from sidctl.data.heldout import decade_label
+
+    assert decade_label("Toy Story (1995)") == "1990s"
+    assert decade_label("M (1931)") == "1930s"
+    assert decade_label("no year here") is None
+
+
+def test_tile_channel_flag_is_opt_in_and_restores():
+    titles, attributes = _multilabel_catalog()
+    tok = build_tokenizer("tiled", titles, attributes=attributes, **_tok_kwargs())
+    assert tok.is_tiled
+    tok._ignore_tile_channels = True
+    assert not tok.is_tiled
+    tok._ignore_tile_channels = False
+    assert tok.is_tiled
+
+
 def test_sliced_uses_constraint_l0_and_within_slice_residual(corpus):
     kwargs = dict(attributes=corpus.attributes, **_tok_kwargs())
     cat = build_tokenizer("category", corpus.item_titles, **kwargs)
