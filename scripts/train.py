@@ -100,6 +100,11 @@ def main() -> None:
         warmup_steps=tcfg.get("warmup_steps", 500),
         checkpoint_dir=ckpt_dir,
         device=device,
+        constraint_loss_weight=(
+            tcfg["constraint_loss_weight"]
+            if "constraint_loss_weight" in tcfg
+            else (1.0 if tok.kind == "sliced" else 0.0)
+        ),
     )
     history = trainer.train(
         epochs=args.epochs or tcfg.get("epochs", 20),

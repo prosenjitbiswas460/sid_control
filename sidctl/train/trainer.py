@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -26,6 +27,7 @@ class Trainer:
         warmup_steps: int = 500,
         checkpoint_dir: str | Path = "checkpoints",
         device: str | None = None,
+        constraint_loss_weight: float = 0.0,
     ):
         self.model = model
         self.vocab = vocab
@@ -35,6 +37,9 @@ class Trainer:
         self.warmup_steps = warmup_steps
         self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        # L = L_rec + λ L_ctrl, where L_ctrl is CE on the first SID token
+        # (the constraint slice when the tokenizer is category/sliced/tiled).
+        self.constraint_loss_weight = float(constraint_loss_weight)
 
         self.device = torch.device(
             device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,13 +59,27 @@ class Trainer:
         for group in self.optimizer.param_groups:
             group["lr"] = self.base_lr * scale
 
-    def _loss(self, batch: dict) -> torch.Tensor:
+    def _losses(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Recommendation CE, constraint-slice CE, and the joint scalar."""
+        labels = batch["labels"].to(self.device)
         out = self.model(
             batch["input_ids"].to(self.device),
             batch["attention_mask"].to(self.device),
-            batch["labels"].to(self.device),
+            labels,
         )
-        return out["loss"]
+        rec = out["loss"]
+        logits = out["logits"]
+        first = labels[:, 0]
+        valid = first.ne(-100)
+        if valid.any():
+            ctrl = F.cross_entropy(logits[:, 0, :], first, reduction="mean")
+        else:
+            ctrl = rec.new_zeros(())
+        joint = rec + self.constraint_loss_weight * ctrl
+        return rec, ctrl, joint
+
+    def _loss(self, batch: dict) -> torch.Tensor:
+        return self._losses(batch)[2]
 
     @torch.no_grad()
     def validate(self) -> float:
@@ -86,7 +105,7 @@ class Trainer:
                 self.step += 1
                 self._set_lr()
                 self.optimizer.zero_grad(set_to_none=True)
-                loss = self._loss(batch)
+                rec, ctrl, loss = self._losses(batch)
                 loss.backward()
                 if self.grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(
@@ -95,7 +114,11 @@ class Trainer:
                 self.optimizer.step()
                 total += loss.item()
                 n += 1
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
+                pbar.set_postfix(
+                    loss=f"{loss.item():.4f}",
+                    rec=f"{rec.item():.3f}",
+                    ctrl=f"{ctrl.item():.3f}",
+                )
 
             train_loss = total / max(n, 1)
             val_loss = self.validate()

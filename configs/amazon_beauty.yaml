@@ -25,6 +25,7 @@ tokenizers:
   - {kind: rq, text_source: title_side_attr}
   - {kind: category, text_source: title_side}
   - {kind: tiled, text_source: title_side}
+  - {kind: sliced, text_source: title_side}
   - {kind: random, text_source: title_side}
 
 model:

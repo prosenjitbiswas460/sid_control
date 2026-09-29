@@ -25,7 +25,7 @@ from sidctl.data.corpus import Corpus  # noqa: E402
 from sidctl.sid import SIDTokenizer  # noqa: E402
 from sidctl.utils import load_config, save_json  # noqa: E402
 
-_KNOWN_TAG_PREFIXES = ("rq_", "category_", "tiled_", "random_")
+_KNOWN_TAG_PREFIXES = ("rq_", "category_", "tiled_", "sliced_", "random_")
 
 
 def _discover_tags(art: Path, cfg: dict, requested: list[str] | None) -> list[str]:

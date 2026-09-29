@@ -326,6 +326,44 @@ def test_tiled_removes_multilabel_floor():
     assert tiled_leak == pytest.approx(0.0)
 
 
+def test_sliced_uses_constraint_l0_and_within_slice_residual(corpus):
+    kwargs = dict(attributes=corpus.attributes, **_tok_kwargs())
+    cat = build_tokenizer("category", corpus.item_titles, **kwargs)
+    sl = build_tokenizer("sliced", corpus.item_titles, **kwargs)
+    assert sl.is_sliced
+    assert not sl.is_tiled
+    assert np.array_equal(cat.sid_table[:, 0], sl.sid_table[:, 0])
+    # Same constraint cut, different retrieval tail.
+    assert not np.array_equal(cat.sid_table[:, 1:-1], sl.sid_table[:, 1:-1])
+    labels = corpus.attributes.dominant_labels()
+    for a in np.unique(labels):
+        if a < 0:
+            continue
+        items = np.flatnonzero(labels == a)
+        assert len(set(int(sl.sid_table[i, 0]) for i in items)) == 1
+
+
+def test_joint_loss_is_recommendation_plus_slice_ce(corpus, tokenizer):
+    from torch.utils.data import DataLoader
+
+    from sidctl.train import Trainer
+
+    model, vocab = _tiny_model(tokenizer)
+    ds = GRDataset(corpus, tokenizer, vocab, split="train", max_history_len=5)
+    loader = DataLoader(ds, batch_size=4, collate_fn=collate_fn)
+    batch = next(iter(loader))
+    plain = Trainer(
+        model, vocab, loader, constraint_loss_weight=0.0, warmup_steps=0
+    )
+    rec, ctrl, joint = plain._losses(batch)
+    assert torch.allclose(joint, rec)
+    weighted = Trainer(
+        model, vocab, loader, constraint_loss_weight=2.0, warmup_steps=0
+    )
+    rec2, ctrl2, joint2 = weighted._losses(batch)
+    assert torch.allclose(joint2, rec2 + 2.0 * ctrl2)
+
+
 def test_tiled_prefix_ban_and_semantics(corpus):
     tok = build_tokenizer(
         "tiled",

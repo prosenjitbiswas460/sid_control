@@ -18,6 +18,11 @@ Tokenizer kinds:
     prefixes; an item is excluded if *any* of its tiles is banned (AND).
     Comedy-only films keep their comedy tile, so multi-label overlap no
     longer forces catalog collateral.
+``sliced``
+    Joint retrieval+constraint index. Level 0 is the chosen constraint
+    (dominant attribute); deeper codes are residual k-means fitted *inside*
+    each level-0 slice, so items that share a constraint value still have a
+    semantic neighbourhood among themselves. One SID per item.
 ``random``
     Codes assigned at random. Prefixes carry no attribute information, so this
     is the *lower bound*.
@@ -41,7 +46,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sidctl.attributes import AttributeTable
 from sidctl.sid.rq_kmeans import RQKMeans
 
-TokenizerKind = ("rq", "category", "tiled", "random")
+TokenizerKind = ("rq", "category", "tiled", "sliced", "random")
 
 
 def _tile_attribute_ids(
@@ -138,6 +143,12 @@ class SIDTokenizer:
             codes = self._fit_category(texts, attributes)
             self.sid_table = self._add_collision_codes(codes)
             self.tile_sids = None
+        elif self.kind == "sliced":
+            if attributes is None:
+                raise ValueError("kind='sliced' requires an AttributeTable")
+            codes = self._fit_sliced(texts, attributes)
+            self.sid_table = self._add_collision_codes(codes)
+            self.tile_sids = None
         elif self.kind == "tiled":
             if attributes is None:
                 raise ValueError("kind='tiled' requires an AttributeTable")
@@ -179,6 +190,47 @@ class SIDTokenizer:
             )
             self.rq.fit(embeddings)
             rest = self.rq.encode(embeddings)
+            return np.concatenate([level0[:, None], rest], axis=1)
+        return level0[:, None]
+
+    def _quantize_subset(self, embeddings: np.ndarray, num_levels: int) -> np.ndarray:
+        """RQ on a slice; codebook cannot exceed the number of points."""
+        n = len(embeddings)
+        out = np.zeros((n, num_levels), dtype=np.int64)
+        if n == 0 or num_levels <= 0:
+            return out
+        if n == 1:
+            return out
+        rq = RQKMeans(
+            num_levels=num_levels,
+            codebook_size=min(self.codebook_size, n),
+            random_state=self.random_state,
+        )
+        try:
+            rq.fit(embeddings)
+            return rq.encode(embeddings)
+        except ValueError:
+            return out
+
+    def _fit_sliced(self, texts: list[str], attributes: AttributeTable) -> np.ndarray:
+        """Level 0 = constraint; residual RQ is fit per constraint slice.
+
+        Unlike ``category``, which quantizes the whole catalog and then
+        overwrites only the first code, this builds the retrieval tail *inside*
+        each slice so Sci-Fi items can still neighbour Sci-Fi without sharing
+        a prefix with Drama.
+        """
+        labels = attributes.dominant_labels()
+        level0 = labels + 1
+        embeddings, self.vectorizer, self.svd = _embed_texts(
+            texts, self.tfidf_dim, self.embed_dim, self.random_state
+        )
+        deeper = max(self.num_levels - 1, 0)
+        rest = np.zeros((len(texts), deeper), dtype=np.int64)
+        if deeper:
+            for code in np.unique(level0):
+                idx = np.flatnonzero(level0 == code)
+                rest[idx] = self._quantize_subset(embeddings[idx], deeper)
             return np.concatenate([level0[:, None], rest], axis=1)
         return level0[:, None]
 
@@ -286,6 +338,10 @@ class SIDTokenizer:
     @property
     def is_tiled(self) -> bool:
         return self.kind == "tiled" and self.tile_sids is not None
+
+    @property
+    def is_sliced(self) -> bool:
+        return self.kind == "sliced"
 
     # ----------------------------------------------------------------- access
 
